@@ -1,5 +1,8 @@
 use structopt::StructOpt;
 
+mod compiler;
+use compiler::to_bytecode;
+
 mod parser;
 use parser::parse_asm;
 
@@ -23,7 +26,7 @@ fn main() -> DynResult<()> {
     };
 
     let asm_statements = match parse_asm(&contents) {
-        Ok(s) => s,
+        Ok(s) => s.1,
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
             eprintln!("Parse Error:\n{:#?}", e);
             std::process::exit(1);
@@ -34,7 +37,8 @@ fn main() -> DynResult<()> {
         }
     };
 
-    dbg!(&asm_statements);
+    let bytecode = to_bytecode(&asm_statements)?;
+    dbg!(&bytecode);
 
     Ok(())
 }

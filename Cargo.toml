@@ -11,4 +11,5 @@ edition = "2018"
 [workspace]
 members = [
     "flock_asm",
+    "flock_bytecode",
 ]

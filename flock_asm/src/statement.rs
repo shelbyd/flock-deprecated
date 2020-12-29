@@ -1,13 +1,14 @@
 #[derive(Debug, PartialEq, Eq)]
-pub enum Statement {
-    Comment(String),
+#[non_exhaustive]
+pub enum Statement<'s> {
+    Comment(&'s str),
     EmptyLine,
-    LabelDefinition(String),
-    Command0(String),
-    Command1(String, Argument),
+    LabelDefinition(&'s str),
+    Command0(&'s str),
+    Command1(&'s str, Argument),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Argument {
-    Value(i64),
+    Literal(i64),
 }
