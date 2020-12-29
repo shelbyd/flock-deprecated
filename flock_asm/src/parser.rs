@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
     character::complete::{alphanumeric1, digit1, line_ending, multispace0, multispace1},
-    combinator::{all_consuming, map, opt, peek, recognize},
+    combinator::{all_consuming, eof, map, peek, recognize},
     multi::{separated_list0, separated_list1},
     sequence::{preceded, terminated, tuple},
     IResult,
@@ -11,10 +11,7 @@ use nom::{
 use crate::statement::{Argument, Statement};
 
 pub fn parse_asm(input: &str) -> IResult<&str, Vec<Statement>> {
-    all_consuming(terminated(
-        separated_list0(line_ending, single_statement),
-        opt(line_ending),
-    ))(input)
+    all_consuming(separated_list0(line_ending, single_statement))(input)
 }
 
 fn single_statement(input: &str) -> IResult<&str, Statement> {
@@ -35,7 +32,7 @@ fn comment(input: &str) -> IResult<&str, Statement> {
 }
 
 fn empty_line(input: &str) -> IResult<&str, Statement> {
-    map(peek(line_ending), |_| Statement::EmptyLine)(input)
+    map(peek(alt((line_ending, eof))), |_| Statement::EmptyLine)(input)
 }
 
 fn label_definition(input: &str) -> IResult<&str, Statement> {
@@ -70,5 +67,7 @@ fn ident(input: &str) -> IResult<&str, &str> {
 }
 
 fn argument(input: &str) -> IResult<&str, Argument> {
-    map(digit1, |n: &str| Argument::Literal(n.parse::<i64>().unwrap()))(input)
+    map(digit1, |n: &str| {
+        Argument::Literal(n.parse::<i64>().unwrap())
+    })(input)
 }

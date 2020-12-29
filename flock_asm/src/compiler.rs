@@ -36,9 +36,7 @@ impl UnrecognizedStatementError {
     }
 }
 
-impl std::error::Error for UnrecognizedStatementError {
-
-}
+impl std::error::Error for UnrecognizedStatementError {}
 
 impl std::fmt::Display for UnrecognizedStatementError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
