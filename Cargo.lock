@@ -82,6 +82,9 @@ dependencies = [
 [[package]]
 name = "flock_bytecode"
 version = "0.1.0"
+dependencies = [
+ "bitflags",
+]
 
 [[package]]
 name = "flock_vm"

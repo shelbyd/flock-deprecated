@@ -5,4 +5,3 @@ main:
   PUSH 8
   ADD
   DUMP_DEBUG
-

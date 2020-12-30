@@ -1,4 +1,4 @@
-use flock_bytecode::{ByteCode, OpCode};
+use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 
 pub struct Vm {
     program_counter: usize,
@@ -58,6 +58,15 @@ impl Vm {
                     eprintln!("  {:#03} {:#018x} ({})", i, value, value)
                 }
             }
+            OpCode::Jump(flags) => {
+                let target = self.pop()?;
+                let check_against = self.peek()?;
+                let should_jump = flags.is_empty()
+                    || (flags.contains(ConditionFlags::ZERO) && *check_against == 0);
+                if should_jump {
+                    self.program_counter = target as usize;
+                }
+            }
             op => {
                 unimplemented!("Unhandled opcode {:?}", op);
             }
@@ -69,6 +78,12 @@ impl Vm {
     fn pop(&mut self) -> Result<i64, ExecutionError> {
         self.stack.pop().ok_or(ExecutionError::PopFromEmptyStack)
     }
+
+    fn peek(&mut self) -> Result<&i64, ExecutionError> {
+        self.stack
+            .get(self.stack.len() - 1)
+            .ok_or(ExecutionError::PeekFromEmptyStack)
+    }
 }
 
 enum ControlFlow {
@@ -79,6 +94,7 @@ enum ControlFlow {
 #[derive(Debug)]
 pub enum ExecutionError {
     PopFromEmptyStack,
+    PeekFromEmptyStack,
 }
 
 impl std::error::Error for ExecutionError {}

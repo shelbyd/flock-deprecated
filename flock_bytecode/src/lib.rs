@@ -31,4 +31,12 @@ pub enum OpCode {
     Push(i64),
     Add,
     DumpDebug,
+    Jump(ConditionFlags),
+}
+
+bitflags::bitflags! {
+    pub struct ConditionFlags: u8 {
+        const EMPTY = 0b0;
+        const ZERO = 0b1;
+    }
 }

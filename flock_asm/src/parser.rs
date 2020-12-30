@@ -1,8 +1,8 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
-    character::complete::{alphanumeric1, digit1, line_ending, multispace0, multispace1},
-    combinator::{all_consuming, eof, map, peek, recognize},
+    character::complete::{alpha1, alphanumeric1, digit1, line_ending, multispace0, space1},
+    combinator::{all_consuming, eof, map, opt, peek, recognize},
     multi::{separated_list0, separated_list1},
     sequence::{preceded, terminated, tuple},
     IResult,
@@ -53,7 +53,7 @@ fn command_0_arg(input: &str) -> IResult<&str, Statement> {
 
 fn command_1_arg(input: &str) -> IResult<&str, Statement> {
     map(
-        tuple((multispace0, command, multispace1, argument)),
+        tuple((multispace0, command, space1, argument)),
         |(_, command, _, arg)| Statement::Command1(command, arg),
     )(input)
 }
@@ -67,7 +67,10 @@ fn ident(input: &str) -> IResult<&str, &str> {
 }
 
 fn argument(input: &str) -> IResult<&str, Argument> {
-    map(digit1, |n: &str| {
-        Argument::Literal(n.parse::<i64>().unwrap())
-    })(input)
+    let literal_number = map(recognize(tuple((opt(tag("-")), digit1))), |n: &str| {
+        Argument::LiteralNumber(n.parse::<i64>().unwrap())
+    });
+    let literal_str = map(alpha1, Argument::LiteralStr);
+    let reference = map(preceded(tag("$"), ident), Argument::Reference);
+    alt((literal_number, reference, literal_str))(input)
 }
