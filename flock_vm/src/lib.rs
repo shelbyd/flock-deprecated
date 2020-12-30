@@ -60,9 +60,14 @@ impl Vm {
             }
             OpCode::Jump(flags) => {
                 let target = self.pop()?;
-                let check_against = self.peek()?;
-                let should_jump = flags.is_empty()
-                    || (flags.contains(ConditionFlags::ZERO) && *check_against == 0);
+                let should_jump = {
+                    if flags.is_empty() {
+                        true
+                    } else {
+                        let check_against = self.peek()?;
+                        flags.contains(ConditionFlags::ZERO) && *check_against == 0
+                    }
+                };
                 if should_jump {
                     self.program_counter = target as usize;
                 }
