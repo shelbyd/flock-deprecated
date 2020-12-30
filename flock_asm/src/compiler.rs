@@ -53,14 +53,25 @@ fn compile_action<'s>(
         Statement::LabelDefinition(label) => CompileAction::RegisterLabel(label),
         Statement::Command1("PUSH", arg) => CompileAction::OpCodeThunk(Box::new(move |table: &_| {
             Ok(OpCode::Push(resolve(arg, table)?))
-        }) as Box<_>)
-        .into(),
+        }) as Box<_>),
         Statement::Command0("ADD") => OpCode::Add.into(),
         Statement::Command0("DUMP_DEBUG") => OpCode::DumpDebug.into(),
         Statement::Command1("JMP", Argument::LiteralStr(arg)) => {
             OpCode::Jump(parse_jump_arg(arg)?).into()
         }
         Statement::Command0("JMP") => OpCode::Jump(ConditionFlags::EMPTY).into(),
+        Statement::Command0("JSR") => OpCode::JumpToSubroutine.into(),
+        Statement::Command1("BURY", arg) => CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+            Ok(OpCode::Bury(resolve(arg, table)?))
+        }) as Box<_>),
+        Statement::Command1("DREDGE", arg) => {
+            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+                Ok(OpCode::Dredge(resolve(arg, table)?))
+            }) as Box<_>)
+        }
+        Statement::Command0("DUP") => OpCode::Duplicate.into(),
+        Statement::Command0("RET") => OpCode::Return.into(),
+        Statement::Command0("POP") => OpCode::Pop.into(),
         s => Err(CompilationError::UnrecognizedStatement(format!("{:?}", s)))?,
     };
     Ok(Some(action))

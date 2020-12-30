@@ -32,6 +32,12 @@ pub enum OpCode {
     Add,
     DumpDebug,
     Jump(ConditionFlags),
+    JumpToSubroutine,
+    Bury(i64),
+    Dredge(i64),
+    Duplicate,
+    Return,
+    Pop,
 }
 
 bitflags::bitflags! {

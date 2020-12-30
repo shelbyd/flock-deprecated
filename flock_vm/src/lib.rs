@@ -72,6 +72,34 @@ impl Vm {
                     self.program_counter = target as usize;
                 }
             }
+            OpCode::JumpToSubroutine => {
+                let target = self.pop()?;
+                self.stack.push(self.program_counter as i64);
+                self.program_counter = target as usize;
+            }
+            OpCode::Bury(index) => {
+                let value = self.pop()?;
+                self.stack.insert(self.stack.len() - *index as usize, value);
+            }
+            OpCode::Dredge(index) => {
+                let remove_index = (self.stack.len() - 1)
+                    .checked_sub(*index as usize)
+                    .ok_or(ExecutionError::DredgeOutOfRange(*index))?;
+                let value = self.stack.remove(remove_index);
+                self.stack.push(value);
+            }
+            OpCode::Duplicate => {
+                let value = self.pop()?;
+                self.stack.push(value);
+                self.stack.push(value);
+            }
+            OpCode::Pop => {
+                self.pop()?;
+            }
+            OpCode::Return => {
+                let target = self.pop()?;
+                self.program_counter = target as usize;
+            }
             op => {
                 unimplemented!("Unhandled opcode {:?}", op);
             }
@@ -100,6 +128,7 @@ enum ControlFlow {
 pub enum ExecutionError {
     PopFromEmptyStack,
     PeekFromEmptyStack,
+    DredgeOutOfRange(i64),
 }
 
 impl std::error::Error for ExecutionError {}
