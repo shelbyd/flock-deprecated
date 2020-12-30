@@ -1,5 +1,5 @@
 [package]
-name = "flock"
+name = "flock_vm"
 version = "0.1.0"
 authors = ["Shelby Doolittle <shelby@shelbyd.com>"]
 edition = "2018"
@@ -7,10 +7,4 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
-[workspace]
-members = [
-    "flock_asm",
-    "flock_bytecode",
-    "flock_vm",
-]
+flock_bytecode = { path = "../flock_bytecode", version = "0.1.0" }

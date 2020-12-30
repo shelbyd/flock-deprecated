@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 flock_bytecode = { path = "../flock_bytecode", version = "0.1.0" }
+flock_vm = { path = "../flock_vm", version = "0.1.0" }
 
 nom = "6"
 structopt = "*"

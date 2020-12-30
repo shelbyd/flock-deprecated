@@ -74,6 +74,7 @@ name = "flock_asm"
 version = "0.1.0"
 dependencies = [
  "flock_bytecode",
+ "flock_vm",
  "nom",
  "structopt",
 ]
@@ -81,6 +82,13 @@ dependencies = [
 [[package]]
 name = "flock_bytecode"
 version = "0.1.0"
+
+[[package]]
+name = "flock_vm"
+version = "0.1.0"
+dependencies = [
+ "flock_bytecode",
+]
 
 [[package]]
 name = "funty"

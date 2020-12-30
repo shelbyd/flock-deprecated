@@ -38,7 +38,9 @@ fn main() -> DynResult<()> {
     };
 
     let bytecode = to_bytecode(&asm_statements)?;
-    dbg!(&bytecode);
+
+    let mut vm = flock_vm::Vm::new();
+    vm.run(&bytecode)?;
 
     Ok(())
 }
