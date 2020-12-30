@@ -15,18 +15,23 @@ fibonacci:
 
   PUSH -1
   ADD
+
+  PUSH $fibonacci_0
+  JMP z
+
   DUP
+  PUSH -1
+  ADD
 
   PUSH $fibonacci
   JSR
   BURY 1
 
-  PUSH -1
-  ADD
   PUSH $fibonacci
   JSR
 
   ADD
+  DREDGE 1
   RET
 
 fibonacci_0:

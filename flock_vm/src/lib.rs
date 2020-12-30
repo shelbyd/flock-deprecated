@@ -39,24 +39,7 @@ impl Vm {
                 self.stack.push(a.overflowing_add(b).0);
             }
             OpCode::DumpDebug => {
-                eprintln!("Flock VM Debug");
-                eprintln!("PC: {}", self.program_counter);
-
-                eprintln!("");
-
-                eprintln!("OpCodes:");
-                let bounds: usize = 5;
-                for (i, op) in bytecode.surrounding(self.program_counter, bounds) {
-                    let delta = (i as isize) - ((self.program_counter - 1) as isize);
-                    eprintln!("  {:#2}: {:?}", delta, op);
-                }
-
-                eprintln!("");
-
-                eprintln!("Stack:");
-                for (i, value) in self.stack.iter().rev().enumerate() {
-                    eprintln!("  {:#03} {:#018x} ({})", i, value, value)
-                }
+                self.print_debug(bytecode);
             }
             OpCode::Jump(flags) => {
                 let target = self.pop()?;
@@ -116,6 +99,27 @@ impl Vm {
         self.stack
             .get(self.stack.len() - 1)
             .ok_or(ExecutionError::PeekFromEmptyStack)
+    }
+
+    fn print_debug(&self, bytecode: &ByteCode) {
+        eprintln!("Flock VM Debug");
+        eprintln!("PC: {}", self.program_counter);
+
+        eprintln!("");
+
+        eprintln!("OpCodes:");
+        let bounds: usize = 5;
+        for (i, op) in bytecode.surrounding(self.program_counter, bounds) {
+            let delta = (i as isize) - (self.program_counter as isize);
+            eprintln!("  {:#2}: {:?}", delta, op);
+        }
+
+        eprintln!("");
+
+        eprintln!("Stack:");
+        for (i, value) in self.stack.iter().rev().enumerate() {
+            eprintln!("  {:#03} {:#018x} ({})", i, value, value)
+        }
     }
 }
 
