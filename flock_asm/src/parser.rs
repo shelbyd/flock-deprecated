@@ -1,10 +1,12 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
-    character::complete::{alpha1, alphanumeric1, digit1, line_ending, multispace0, space1},
+    character::complete::{
+        alpha1, alphanumeric1, digit1, line_ending, multispace0, one_of, space0, space1,
+    },
     combinator::{all_consuming, eof, map, opt, peek, recognize},
     multi::{separated_list0, separated_list1},
-    sequence::{preceded, terminated, tuple},
+    sequence::{delimited, preceded, terminated, tuple},
     IResult,
 };
 
@@ -15,18 +17,22 @@ pub fn parse_asm(input: &str) -> IResult<&str, Vec<Statement>> {
 }
 
 fn single_statement(input: &str) -> IResult<&str, Statement> {
-    alt((
-        empty_line,
-        comment,
-        label_definition,
-        command_1_arg,
-        command_0_arg,
-    ))(input)
+    delimited(
+        space0,
+        alt((
+            empty_line,
+            comment,
+            label_definition,
+            command_1_arg,
+            command_0_arg,
+        )),
+        space0,
+    )(input)
 }
 
 fn comment(input: &str) -> IResult<&str, Statement> {
     map(
-        preceded(tag("#"), take_while(|c| c != '\n' && c != '\r')),
+        preceded(one_of("#;"), take_while(|c| c != '\n' && c != '\r')),
         |s: &str| Statement::Comment(s),
     )(input)
 }

@@ -6,11 +6,12 @@ main:
 loop:
   PUSH -1
   ADD
+
   PUSH $halt
-  DUMP_DEBUG
   JMP z
 
   PUSH $loop
   JMP
 
 halt:
+  DUMP_DEBUG
