@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 flock_bytecode = { path = "../flock_bytecode", version = "0.1.0" }
+rand = "0.8.0"

@@ -92,6 +92,9 @@ fn compile_action<'s>(
         Statement::Command0("DUP") => OpCode::Duplicate.into(),
         Statement::Command0("RET") => OpCode::Return.into(),
         Statement::Command0("POP") => OpCode::Pop.into(),
+        Statement::Command0("FORK") => OpCode::Fork.into(),
+        Statement::Command1("JOIN", Argument::LiteralNumber(n)) => OpCode::Join(*n).into(),
+        Statement::Command0("HALT") => OpCode::Halt.into(),
         s => Err(CompilationError::UnrecognizedStatement(format!("{:?}", s)))?,
     };
     Ok(Some(action))
@@ -125,11 +128,11 @@ impl std::fmt::Display for CompilationError {
 
 // TODO(shelbyd): Don't parse in the compiler.
 fn parse_jump_arg(arg: &str) -> Result<ConditionFlags, CompilationError> {
-    if arg == "z" {
-        Ok(ConditionFlags::ZERO)
-    } else {
-        Err(CompilationError::UnrecognizedConditionFlags(
-            arg.to_string(),
-        ))
-    }
+    arg.chars()
+        .map(|c| match c {
+            'z' => Ok(ConditionFlags::ZERO),
+            'f' => Ok(ConditionFlags::FORK),
+            c => Err(CompilationError::UnrecognizedConditionFlags(c.to_string())),
+        })
+        .fold(Ok(ConditionFlags::EMPTY), |flags, c| Ok(flags? | c?))
 }

@@ -38,11 +38,15 @@ pub enum OpCode {
     Duplicate,
     Return,
     Pop,
+    Fork,
+    Join(i64),
+    Halt,
 }
 
 bitflags::bitflags! {
     pub struct ConditionFlags: u8 {
         const EMPTY = 0b0;
         const ZERO = 0b1;
+        const FORK = 0b10;
     }
 }
