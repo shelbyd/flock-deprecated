@@ -6,6 +6,7 @@ pub enum Statement<'s> {
     LabelDefinition(&'s str),
     Command0(&'s str),
     Command1(&'s str, Argument<'s>),
+    Command2(&'s str, Argument<'s>, Argument<'s>),
 }
 
 #[derive(Debug, PartialEq, Eq)]

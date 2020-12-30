@@ -2,33 +2,27 @@
 
 main:
   PUSH 10
-  PUSH $fibonacci
-  JSR
+  JSR $fibonacci
 
-  PUSH $halt
-  JMP
+  JMP $halt
 
 fibonacci:
   BURY 1
-  PUSH $fibonacci_0
-  JMP z
+  JMP z, $fibonacci_0
 
   PUSH -1
   ADD
 
-  PUSH $fibonacci_0
-  JMP z
+  JMP z, $fibonacci_0
 
   DUP
   PUSH -1
   ADD
 
-  PUSH $fibonacci
-  JSR
+  JSR $fibonacci
   BURY 1
 
-  PUSH $fibonacci
-  JSR
+  JSR $fibonacci
 
   ADD
   DREDGE 1

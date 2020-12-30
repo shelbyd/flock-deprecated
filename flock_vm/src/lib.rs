@@ -41,8 +41,12 @@ impl Vm {
             OpCode::DumpDebug => {
                 self.print_debug(bytecode);
             }
-            OpCode::Jump(flags) => {
-                let target = self.pop()?;
+            OpCode::Jump(flags, target) => {
+                let target = match target {
+                    None => self.pop()?,
+                    Some(t) => *t,
+                };
+
                 let should_jump = {
                     if flags.is_empty() {
                         true
@@ -55,8 +59,12 @@ impl Vm {
                     self.program_counter = target as usize;
                 }
             }
-            OpCode::JumpToSubroutine => {
-                let target = self.pop()?;
+            OpCode::JumpToSubroutine(target) => {
+                let target = match target {
+                    None => self.pop()?,
+                    Some(t) => *t,
+                };
+
                 self.stack.push(self.program_counter as i64);
                 self.program_counter = target as usize;
             }

@@ -23,6 +23,7 @@ fn single_statement(input: &str) -> IResult<&str, Statement> {
             empty_line,
             comment,
             label_definition,
+            command_2_arg,
             command_1_arg,
             command_0_arg,
         )),
@@ -70,6 +71,22 @@ fn command(input: &str) -> IResult<&str, &str> {
 
 fn ident(input: &str) -> IResult<&str, &str> {
     recognize(separated_list1(tag("_"), alphanumeric1))(input)
+}
+
+fn command_2_arg(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            multispace0,
+            command,
+            space1,
+            argument,
+            space0,
+            tag(","),
+            space0,
+            argument,
+        )),
+        |(_, command, _, arg0, _, _, _, arg1)| Statement::Command2(command, arg0, arg1),
+    )(input)
 }
 
 fn argument(input: &str) -> IResult<&str, Argument> {

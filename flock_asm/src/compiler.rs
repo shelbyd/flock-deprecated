@@ -56,11 +56,31 @@ fn compile_action<'s>(
         }) as Box<_>),
         Statement::Command0("ADD") => OpCode::Add.into(),
         Statement::Command0("DUMP_DEBUG") => OpCode::DumpDebug.into(),
+        Statement::Command0("JMP") => OpCode::Jump(ConditionFlags::EMPTY, None).into(),
         Statement::Command1("JMP", Argument::LiteralStr(arg)) => {
-            OpCode::Jump(parse_jump_arg(arg)?).into()
+            OpCode::Jump(parse_jump_arg(arg)?, None).into()
         }
-        Statement::Command0("JMP") => OpCode::Jump(ConditionFlags::EMPTY).into(),
-        Statement::Command0("JSR") => OpCode::JumpToSubroutine.into(),
+        Statement::Command1("JMP", ref_ @ Argument::Reference(_)) => {
+            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+                Ok(OpCode::Jump(
+                    ConditionFlags::EMPTY,
+                    Some(resolve(ref_, table)?),
+                ))
+            }))
+        }
+        Statement::Command2("JMP", Argument::LiteralStr(arg), ref_ @ Argument::Reference(_)) => {
+            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+                let target = Some(resolve(ref_, table)?);
+                let flags = parse_jump_arg(arg)?;
+                Ok(OpCode::Jump(flags, target))
+            }))
+        }
+        Statement::Command0("JSR") => OpCode::JumpToSubroutine(None).into(),
+        Statement::Command1("JSR", ref_ @ Argument::Reference(_)) => {
+            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+                Ok(OpCode::JumpToSubroutine(Some(resolve(ref_, table)?)))
+            }))
+        }
         Statement::Command1("BURY", arg) => CompileAction::OpCodeThunk(Box::new(move |table: &_| {
             Ok(OpCode::Bury(resolve(arg, table)?))
         }) as Box<_>),
