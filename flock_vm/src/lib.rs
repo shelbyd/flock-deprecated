@@ -1,3 +1,5 @@
+#![feature(thread_id_value)]
+
 use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 
 mod task_queue;

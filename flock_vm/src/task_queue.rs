@@ -1,15 +1,17 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use std::num::NonZeroU64;
 use std::sync::RwLock;
-use std::thread::ThreadId;
+
+use lockfree::map::Map;
 
 pub struct TaskQueue<T> {
-    thread_queues: RwLock<HashMap<ThreadId, SingleQueue<T>>>,
+    thread_queues: Map<NonZeroU64, SingleQueue<T>>,
 }
 
 impl<T> TaskQueue<T> {
     pub fn new() -> Self {
         TaskQueue {
-            thread_queues: RwLock::new(HashMap::new()),
+            thread_queues: Map::new(),
         }
     }
 
@@ -20,15 +22,15 @@ impl<T> TaskQueue<T> {
     }
 
     fn with_current<U>(&self, cb: impl FnOnce(&SingleQueue<T>) -> U) -> U {
-        let current_id = std::thread::current().id();
+        let current_id = std::thread::current().id().as_u64();
 
-        if let Some(q) = self.thread_queues.read().unwrap().get(&current_id) {
-            return cb(q);
+        if let Some(q) = self.thread_queues.get(&current_id) {
+            return cb(q.val());
         }
 
         let new = SingleQueue::new();
         let result = cb(&new);
-        self.thread_queues.write().unwrap().insert(current_id, new);
+        self.thread_queues.insert(current_id, new);
         result
     }
 
@@ -43,22 +45,26 @@ impl<T> TaskQueue<T> {
     pub fn next(&self) -> Option<T> {
         let from_current = self.with_current(|current| current.next_ready_back());
         let with_other_ready = from_current.or_else(|| {
-            let queues = self.thread_queues.read().unwrap();
-            queues
+            let result = self
+                .thread_queues
                 .iter()
-                .filter(|(id, _)| **id != std::thread::current().id())
-                .filter_map(|(_, q)| q.next_ready_front())
-                .next()
+                .filter(|entry| *entry.key() != std::thread::current().id().as_u64())
+                .filter_map(|entry| entry.val().next_ready_front())
+                .next();
+            result
         });
         let with_current_blocked =
             with_other_ready.or_else(|| self.with_current(|c| c.next_blocked()));
+
+        let current_id = std::thread::current().id().as_u64();
         let with_other_blocked = with_current_blocked.or_else(|| {
-            let queues = self.thread_queues.read().unwrap();
-            queues
+            let result = self
+                .thread_queues
                 .iter()
-                .filter(|(id, _)| **id != std::thread::current().id())
-                .filter_map(|(_, q)| q.next_blocked())
-                .next()
+                .filter(|entry| *entry.key() != current_id)
+                .filter_map(|entry| entry.val().next_blocked())
+                .next();
+            result
         });
         with_other_blocked
     }
