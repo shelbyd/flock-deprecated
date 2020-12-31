@@ -8,7 +8,7 @@ use parser::parse_asm;
 
 mod statement;
 
-#[derive(StructOpt)]
+#[derive(StructOpt, Debug)]
 struct Options {
     file: std::path::PathBuf,
 }

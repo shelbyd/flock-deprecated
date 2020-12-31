@@ -3,6 +3,8 @@ use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 mod task_queue;
 use task_queue::TaskQueue;
 
+mod thread_runner;
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -180,10 +182,6 @@ impl Task {
                             .contains(ConditionFlags::ZERO)
                             .implies(*self.peek()? == 0);
                         let forked = flags.contains(ConditionFlags::FORK).implies(self.forked);
-                        if flags.contains(ConditionFlags::FORK) && self.forked {
-                            // dbg!("jump fork");
-                            // dbg!(&self.stack);
-                        }
                         zero && forked
                     }
                 };
