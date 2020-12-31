@@ -1,54 +1,32 @@
 use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
-pub struct Vm {
-    tasks: VecDeque<TaskState>,
-}
+pub struct Vm {}
 
 impl Vm {
     pub fn new() -> Vm {
-        Vm {
-            tasks: {
-                let mut que = VecDeque::new();
-                que.push_back(TaskState {
-                    id: 0,
-                    task: Task::new(),
-                    state: State::Ready,
-                });
-                que
-            },
-        }
+        Vm {}
     }
 
     pub fn run(&mut self, bytecode: &ByteCode) -> Result<(), ExecutionError> {
-        loop {
-            let all_terminated = self.tasks.iter().all(|t| t.state == State::Terminated);
-            if all_terminated {
-                return Ok(());
-            }
+        let mut ready: VecDeque<TaskState> = VecDeque::new();
+        ready.push_back(TaskState {
+            id: 0,
+            task: Task::new(),
+        });
 
-            let mut task_state = match self.tasks.pop_front() {
+        let mut finished = HashMap::new();
+
+        loop {
+            let mut task_state = match ready.pop_front() {
                 None => return Ok(()),
                 Some(t) => t,
             };
 
-            match task_state.state {
-                State::Blocked | State::Terminated => {
-                    self.tasks.push_back(task_state);
-                    continue;
-                }
-                State::Ready => {}
-            }
-
             match task_state.task.run(bytecode)? {
                 Execution::Terminated => {
-                    task_state.state = State::Terminated;
-                    self.tasks.push_back(task_state);
-                }
-                Execution::Blocked => {
-                    task_state.state = State::Blocked;
-                    self.tasks.push_back(task_state);
+                    finished.insert(task_state.id, task_state);
                 }
                 Execution::Fork => {
                     use rand::Rng;
@@ -63,28 +41,22 @@ impl Vm {
                     forked.task.stack.push(task_state.id as i64);
                     task_state.task.stack.push(forked.id as i64);
 
-                    self.tasks.push_front(forked);
-                    self.tasks.push_front(task_state);
+                    ready.push_front(forked);
+                    ready.push_front(task_state);
                 }
                 Execution::Join { task_id, count } => {
-                    let other_task = self
-                        .tasks
-                        .iter()
-                        .find(|t| t.id == task_id)
-                        .ok_or(ExecutionError::UnknownTaskId(task_id))?;
-                    match other_task.state {
-                        State::Terminated => {
-                            let other_stack = &other_task.task.stack;
-                            let to_push = other_stack.split_at(other_stack.len() - count).1;
-                            task_state.task.stack.extend(to_push.iter().cloned());
-                            self.tasks.push_front(task_state);
-                        }
-                        State::Ready | State::Blocked => {
-                            // TODO(shelbyd): Put into a proper blocked state.
-                            task_state.task.program_counter -= 1;
-                            task_state.task.stack.push(task_id as i64);
-                            self.tasks.push_back(task_state);
-                        }
+                    if let Some(other_task) = finished.get(&task_id) {
+                        let other_stack = &other_task.task.stack;
+                        let to_push = other_stack.split_at(other_stack.len() - count).1;
+                        task_state.task.stack.extend(to_push.iter().cloned());
+                        ready.push_front(task_state);
+                    } else if let Some(_) = ready.iter().find(|t| t.id == task_id) {
+                        // TODO(shelbyd): Put into a proper blocked state.
+                        task_state.task.program_counter -= 1;
+                        task_state.task.stack.push(task_id as i64);
+                        ready.push_back(task_state);
+                    } else {
+                        return Err(ExecutionError::UnknownTaskId(task_id));
                     }
                 }
             }
@@ -96,19 +68,10 @@ impl Vm {
 struct TaskState {
     id: usize,
     task: Task,
-    state: State,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum State {
-    Ready,
-    Blocked,
-    Terminated,
 }
 
 enum Execution {
     Terminated,
-    Blocked,
     Fork,
     Join { task_id: usize, count: usize },
 }
@@ -224,12 +187,12 @@ impl Task {
                 return Ok(ControlFlow::Return(Execution::Fork));
             }
             OpCode::Join(count) => {
-        // self.print_debug(bytecode);
-        // {
-        //     use std::io::BufRead;
-        //     let stdin = std::io::stdin();
-        //     stdin.lock().read_line(&mut String::new()).unwrap();
-        // }
+                // self.print_debug(bytecode);
+                // {
+                //     use std::io::BufRead;
+                //     let stdin = std::io::stdin();
+                //     stdin.lock().read_line(&mut String::new()).unwrap();
+                // }
 
                 let task_id = self.pop()? as usize;
                 return Ok(ControlFlow::Return(Execution::Join {
