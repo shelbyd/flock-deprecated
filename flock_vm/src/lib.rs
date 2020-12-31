@@ -1,6 +1,9 @@
 use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 
-use std::collections::{HashMap, VecDeque};
+mod task_queue;
+use task_queue::TaskQueue;
+
+use std::collections::HashMap;
 
 pub struct Vm {}
 
@@ -10,8 +13,8 @@ impl Vm {
     }
 
     pub fn run(&mut self, bytecode: &ByteCode) -> Result<(), ExecutionError> {
-        let mut ready: VecDeque<TaskState> = VecDeque::new();
-        ready.push_back(TaskState {
+        let task_queue = TaskQueue::<TaskState>::new();
+        task_queue.push(TaskState {
             id: 0,
             task: Task::new(),
         });
@@ -19,7 +22,7 @@ impl Vm {
         let mut finished = HashMap::new();
 
         loop {
-            let mut task_state = match ready.pop_front() {
+            let mut task_state = match task_queue.next() {
                 None => return Ok(()),
                 Some(t) => t,
             };
@@ -41,22 +44,21 @@ impl Vm {
                     forked.task.stack.push(task_state.id as i64);
                     task_state.task.stack.push(forked.id as i64);
 
-                    ready.push_front(forked);
-                    ready.push_front(task_state);
+                    task_queue.push(forked);
+                    task_queue.push(task_state);
                 }
                 Execution::Join { task_id, count } => {
                     if let Some(other_task) = finished.get(&task_id) {
                         let other_stack = &other_task.task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
-                        ready.push_front(task_state);
-                    } else if let Some(_) = ready.iter().find(|t| t.id == task_id) {
+                        task_queue.push(task_state);
+                    } else {
                         // TODO(shelbyd): Put into a proper blocked state.
                         task_state.task.program_counter -= 1;
                         task_state.task.stack.push(task_id as i64);
-                        ready.push_back(task_state);
-                    } else {
-                        return Err(ExecutionError::UnknownTaskId(task_id));
+                        task_queue.push(task_state);
+                        // TODO(shelbyd): Error with unrecognized task id.
                     }
                 }
             }
