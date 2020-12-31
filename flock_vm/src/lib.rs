@@ -54,11 +54,11 @@ impl Vm {
                         task_state.task.stack.extend(to_push.iter().cloned());
                         task_queue.push(task_state);
                     } else {
-                        // TODO(shelbyd): Put into a proper blocked state.
+                        // TODO(shelbyd): Error with unrecognized task id.
                         task_state.task.program_counter -= 1;
                         task_state.task.stack.push(task_id as i64);
-                        task_queue.push(task_state);
-                        // TODO(shelbyd): Error with unrecognized task id.
+
+                        task_queue.push_blocked(task_state);
                     }
                 }
             }
