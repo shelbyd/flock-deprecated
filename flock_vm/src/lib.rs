@@ -4,65 +4,110 @@ mod task_queue;
 use task_queue::TaskQueue;
 
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
-pub struct Vm {}
+pub struct Vm {
+    bytecode: ByteCode,
+    task_queue: Arc<TaskQueue<TaskState>>,
+    finished: Arc<RwLock<HashMap<usize, TaskState>>>,
+}
 
 impl Vm {
-    pub fn new() -> Vm {
-        Vm {}
+    pub fn new(bytecode: ByteCode) -> Vm {
+        Vm {
+            bytecode,
+            task_queue: Arc::new(TaskQueue::<TaskState>::new()),
+            finished: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
-    pub fn run(&mut self, bytecode: &ByteCode) -> Result<(), ExecutionError> {
-        let task_queue = TaskQueue::<TaskState>::new();
-        task_queue.push(TaskState {
+    pub fn run(self) -> Result<(), ExecutionError> {
+        let self_ = Arc::new(self);
+
+        self_.task_queue.push(TaskState {
             id: 0,
             task: Task::new(),
         });
 
-        let mut finished = HashMap::new();
+        let mut threads = Vec::new();
+        for _ in 0..num_cpus::get() {
+            let self_ = self_.clone();
 
-        loop {
-            let mut task_state = match task_queue.next() {
-                None => return Ok(()),
-                Some(t) => t,
-            };
-
-            match task_state.task.run(bytecode)? {
-                Execution::Terminated => {
-                    finished.insert(task_state.id, task_state);
+            let thread = std::thread::spawn(move || -> Result<_, ExecutionError> {
+                loop {
+                    let should_continue =
+                        self_.tick(&self_.bytecode, &self_.task_queue, &self_.finished)?;
+                    if !should_continue {
+                        return Ok(());
+                    }
                 }
-                Execution::Fork => {
-                    use rand::Rng;
+            });
+            threads.push(thread);
+        }
 
-                    let mut forked = task_state.clone();
-                    forked.id = rand::thread_rng().gen();
-                    // TODO(shelbyd): Never generate duplicate ids.
+        for thread in threads {
+            thread.join().unwrap()?;
+        }
+        Ok(())
+    }
 
-                    forked.task.forked = true;
-                    task_state.task.forked = false;
+    fn tick(
+        &self,
+        bytecode: &ByteCode,
+        task_queue: &TaskQueue<TaskState>,
+        finished: &RwLock<HashMap<usize, TaskState>>,
+    ) -> Result<bool, ExecutionError> {
+        let mut task_state = match task_queue.next() {
+            None => return Ok(false),
+            Some(t) => t,
+        };
 
-                    forked.task.stack.push(task_state.id as i64);
-                    task_state.task.stack.push(forked.id as i64);
+        match task_state.task.run(bytecode)? {
+            Execution::Terminated => {
+                finished.write().unwrap().insert(task_state.id, task_state);
+                task_queue.task_finished();
+            }
+            Execution::Fork => {
+                use rand::Rng;
 
-                    task_queue.push(forked);
-                    task_queue.push(task_state);
-                }
-                Execution::Join { task_id, count } => {
-                    if let Some(other_task) = finished.get(&task_id) {
+                let mut forked = task_state.clone();
+                forked.id = rand::thread_rng().gen();
+                // TODO(shelbyd): Never generate duplicate ids.
+
+                forked.task.forked = true;
+                task_state.task.forked = false;
+
+                forked.task.stack.push(task_state.id as i64);
+                task_state.task.stack.push(forked.id as i64);
+
+                task_queue.push(forked);
+                task_queue.push(task_state);
+            }
+            Execution::Join { task_id, count } => {
+                let should_drop_task =
+                    if let Some(other_task) = finished.read().unwrap().get(&task_id) {
                         let other_stack = &other_task.task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
                         task_queue.push(task_state);
+
+                        true
                     } else {
                         // TODO(shelbyd): Error with unrecognized task id.
                         task_state.task.program_counter -= 1;
                         task_state.task.stack.push(task_id as i64);
 
                         task_queue.push_blocked(task_state);
-                    }
+                        false
+                    };
+                // TODO(shelbyd): Workaround for lifetime of read guard.
+                if should_drop_task {
+                    finished.write().unwrap().remove(&task_id);
                 }
             }
         }
+
+        Ok(true)
     }
 }
 

@@ -1,31 +1,33 @@
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 pub struct TaskQueue<T> {
-    ready: Mutex<VecDeque<T>>,
-    blocked: Mutex<VecDeque<T>>,
+    ready: RwLock<VecDeque<T>>,
+    blocked: RwLock<VecDeque<T>>,
 }
 
 impl<T> TaskQueue<T> {
     pub fn new() -> Self {
         TaskQueue {
-            ready: Mutex::new(VecDeque::new()),
-            blocked: Mutex::new(VecDeque::new()),
+            ready: RwLock::new(VecDeque::new()),
+            blocked: RwLock::new(VecDeque::new()),
         }
     }
 
     pub fn push(&self, item: T) {
-        self.ready.lock().unwrap().push_back(item);
+        self.ready.write().unwrap().push_back(item);
     }
 
     pub fn push_blocked(&self, item: T) {
-        self.blocked.lock().unwrap().push_back(item);
+        self.blocked.write().unwrap().push_back(item);
     }
+
+    pub fn task_finished(&self) {}
 
     pub fn next(&self) -> Option<T> {
         [&self.ready, &self.blocked]
             .iter()
-            .filter_map(|q| q.lock().unwrap().pop_front())
+            .filter_map(|q| q.write().unwrap().pop_front())
             .next()
     }
 }
