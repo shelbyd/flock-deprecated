@@ -38,9 +38,10 @@ impl Vm {
             let self_ = self_.clone();
 
             let thread = std::thread::spawn(move || -> Result<_, ExecutionError> {
+                let mut queue_handle = self_.task_queue.clone().handle();
                 loop {
                     let should_continue =
-                        self_.tick(&self_.bytecode, &self_.task_queue, &self_.finished)?;
+                        self_.tick(&self_.bytecode, &mut queue_handle, &self_.finished)?;
                     if !should_continue {
                         return Ok(());
                     }
@@ -58,7 +59,7 @@ impl Vm {
     fn tick(
         &self,
         bytecode: &ByteCode,
-        task_queue: &TaskQueue<TaskState>,
+        task_queue: &mut task_queue::Handle<TaskState>,
         finished: &RwLock<HashMap<usize, TaskState>>,
     ) -> Result<bool, ExecutionError> {
         let mut task_state = match task_queue.next() {
