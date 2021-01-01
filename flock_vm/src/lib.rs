@@ -34,7 +34,9 @@ impl Vm {
         });
 
         let mut threads = Vec::new();
-        for _ in 0..num_cpus::get() {
+
+        let max_threads = usize::MAX;
+        for _ in 0..usize::min(max_threads, num_cpus::get()) {
             let self_ = self_.clone();
 
             let thread = std::thread::spawn(move || -> Result<_, ExecutionError> {
@@ -59,10 +61,10 @@ impl Vm {
     fn tick(
         &self,
         bytecode: &ByteCode,
-        task_queue: &mut task_queue::Handle<TaskState>,
+        queue_handle: &mut task_queue::Handle<TaskState>,
         finished: &RwLock<HashMap<usize, TaskState>>,
     ) -> Result<bool, ExecutionError> {
-        let mut task_state = match task_queue.next() {
+        let mut task_state = match queue_handle.next() {
             None => return Ok(false),
             Some(t) => t,
         };
@@ -70,7 +72,7 @@ impl Vm {
         match task_state.task.run(bytecode)? {
             Execution::Terminated => {
                 finished.write().unwrap().insert(task_state.id, task_state);
-                task_queue.task_finished();
+                queue_handle.task_finished();
             }
             Execution::Fork => {
                 use rand::Rng;
@@ -85,8 +87,8 @@ impl Vm {
                 forked.task.stack.push(task_state.id as i64);
                 task_state.task.stack.push(forked.id as i64);
 
-                task_queue.push(forked);
-                task_queue.push(task_state);
+                queue_handle.push(forked);
+                queue_handle.push(task_state);
             }
             Execution::Join { task_id, count } => {
                 let should_drop_task =
@@ -94,7 +96,7 @@ impl Vm {
                         let other_stack = &other_task.task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
-                        task_queue.push(task_state);
+                        queue_handle.push(task_state);
 
                         true
                     } else {
@@ -102,7 +104,7 @@ impl Vm {
                         task_state.task.program_counter -= 1;
                         task_state.task.stack.push(task_id as i64);
 
-                        task_queue.push_blocked(task_state);
+                        queue_handle.push_blocked(task_state);
                         false
                     };
                 // TODO(shelbyd): Workaround for lifetime of read guard.
@@ -122,6 +124,7 @@ struct TaskState {
     task: Task,
 }
 
+#[derive(Debug)]
 enum Execution {
     Terminated,
     Fork,

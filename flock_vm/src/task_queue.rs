@@ -24,7 +24,7 @@ impl<T> TaskQueue<T> {
             .unwrap()
             .push(ready_worker.stealer());
 
-        let blocked_worker = Worker::new_lifo();
+        let blocked_worker = Worker::new_fifo();
         self.blocked_stealers
             .write()
             .unwrap()
@@ -92,8 +92,7 @@ impl<T> Handle<T> {
     pub fn task_finished(&mut self) {}
 
     pub fn next(&mut self) -> Option<T> {
-        self.ready
-            .pop()
+        None.or_else(|| self.ready.pop())
             .or_else(|| self.queue.ready_into(&self.ready))
             .or_else(|| self.blocked.pop())
             .or_else(|| self.queue.blocked_into(&self.blocked))
