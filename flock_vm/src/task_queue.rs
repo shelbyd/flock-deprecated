@@ -1,34 +1,29 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
+use lockfree::map::{Insertion, Map, Removed};
 
 pub struct TaskQueue<T> {
     injector: Injector<T>,
-    ready_stealers: RwLock<Vec<Stealer<T>>>,
-    blocked_stealers: RwLock<Vec<Stealer<T>>>,
+    ready_stealers: Map<usize, Stealer<T>>,
+    blocked_stealers: Map<usize, Stealer<T>>,
 }
 
 impl<T> TaskQueue<T> {
     pub fn new() -> Self {
         TaskQueue {
             injector: Injector::new(),
-            ready_stealers: RwLock::new(Vec::new()),
-            blocked_stealers: RwLock::new(Vec::new()),
+            ready_stealers: Map::new(),
+            blocked_stealers: Map::new(),
         }
     }
 
     pub fn handle(self: Arc<Self>) -> Handle<T> {
         let ready_worker = Worker::new_lifo();
-        self.ready_stealers
-            .write()
-            .unwrap()
-            .push(ready_worker.stealer());
+        insert_into(&self.ready_stealers, ready_worker.stealer());
 
         let blocked_worker = Worker::new_fifo();
-        self.blocked_stealers
-            .write()
-            .unwrap()
-            .push(blocked_worker.stealer());
+        insert_into(&self.blocked_stealers, ready_worker.stealer());
 
         Handle {
             queue: self.clone(),
@@ -45,10 +40,8 @@ impl<T> TaskQueue<T> {
         let from_injector = || steal_into(worker, |_| self.injector.steal());
         let from_shared_ready = || {
             self.ready_stealers
-                .read()
-                .unwrap()
                 .iter()
-                .filter_map(|s| steal_into(worker, |_| s.steal()))
+                .filter_map(|entry| steal_into(worker, |_| entry.val().steal()))
                 .next()
         };
         None.or_else(from_injector).or_else(from_shared_ready)
@@ -56,11 +49,33 @@ impl<T> TaskQueue<T> {
 
     fn blocked_into(&self, worker: &Worker<T>) -> Option<T> {
         self.blocked_stealers
-            .read()
-            .unwrap()
             .iter()
-            .filter_map(|s| steal_into(worker, |_| s.steal()))
+            .filter_map(|entry| steal_into(worker, |_| entry.val().steal()))
             .next()
+    }
+}
+
+fn insert_into<T>(map: &Map<usize, T>, value: T) {
+    use rand::Rng;
+
+    let id = || rand::thread_rng().gen();
+
+    let mut removed = match map.insert(id(), value) {
+        None => return,
+        Some(removed) => removed,
+    };
+    loop {
+        match Removed::try_as_mut(&mut removed) {
+            Some((k, _)) => {
+                *k = id();
+            }
+            None => continue,
+        }
+        removed = match map.reinsert(removed) {
+            Insertion::Created => return,
+            Insertion::Failed(removed) => removed,
+            Insertion::Updated(removed) => removed,
+        };
     }
 }
 

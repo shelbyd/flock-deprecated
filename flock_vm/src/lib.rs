@@ -91,22 +91,21 @@ impl Vm {
                 queue_handle.push(task_state);
             }
             Execution::Join { task_id, count } => {
-                let should_drop_task =
-                    if let Some(entry) = finished.get(&task_id) {
-                        let other_stack = &entry.val().task.stack;
-                        let to_push = other_stack.split_at(other_stack.len() - count).1;
-                        task_state.task.stack.extend(to_push.iter().cloned());
-                        queue_handle.push(task_state);
+                let should_drop_task = if let Some(entry) = finished.get(&task_id) {
+                    let other_stack = &entry.val().task.stack;
+                    let to_push = other_stack.split_at(other_stack.len() - count).1;
+                    task_state.task.stack.extend(to_push.iter().cloned());
+                    queue_handle.push(task_state);
 
-                        true
-                    } else {
-                        // TODO(shelbyd): Error with unrecognized task id.
-                        task_state.task.program_counter -= 1;
-                        task_state.task.stack.push(task_id as i64);
+                    true
+                } else {
+                    // TODO(shelbyd): Error with unrecognized task id.
+                    task_state.task.program_counter -= 1;
+                    task_state.task.stack.push(task_id as i64);
 
-                        queue_handle.push_blocked(task_state);
-                        false
-                    };
+                    queue_handle.push_blocked(task_state);
+                    false
+                };
                 // TODO(shelbyd): Workaround for lifetime of read guard.
                 if should_drop_task {
                     finished.remove(&task_id);
