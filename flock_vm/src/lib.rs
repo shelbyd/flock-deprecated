@@ -7,13 +7,13 @@ use task_queue::TaskQueue;
 
 mod thread_runner;
 
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use lockfree::map::Map;
+use std::sync::Arc;
 
 pub struct Vm {
     bytecode: ByteCode,
     task_queue: Arc<TaskQueue<TaskState>>,
-    finished: Arc<RwLock<HashMap<usize, TaskState>>>,
+    finished: Arc<Map<usize, TaskState>>,
 }
 
 impl Vm {
@@ -21,7 +21,7 @@ impl Vm {
         Vm {
             bytecode,
             task_queue: Arc::new(TaskQueue::<TaskState>::new()),
-            finished: Arc::new(RwLock::new(HashMap::new())),
+            finished: Arc::new(Map::new()),
         }
     }
 
@@ -62,7 +62,7 @@ impl Vm {
         &self,
         bytecode: &ByteCode,
         queue_handle: &mut task_queue::Handle<TaskState>,
-        finished: &RwLock<HashMap<usize, TaskState>>,
+        finished: &Map<usize, TaskState>,
     ) -> Result<bool, ExecutionError> {
         let mut task_state = match queue_handle.next() {
             None => return Ok(false),
@@ -71,7 +71,7 @@ impl Vm {
 
         match task_state.task.run(bytecode)? {
             Execution::Terminated => {
-                finished.write().unwrap().insert(task_state.id, task_state);
+                finished.insert(task_state.id, task_state);
                 queue_handle.task_finished();
             }
             Execution::Fork => {
@@ -92,8 +92,8 @@ impl Vm {
             }
             Execution::Join { task_id, count } => {
                 let should_drop_task =
-                    if let Some(other_task) = finished.read().unwrap().get(&task_id) {
-                        let other_stack = &other_task.task.stack;
+                    if let Some(entry) = finished.get(&task_id) {
+                        let other_stack = &entry.val().task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
                         queue_handle.push(task_state);
@@ -109,7 +109,7 @@ impl Vm {
                     };
                 // TODO(shelbyd): Workaround for lifetime of read guard.
                 if should_drop_task {
-                    finished.write().unwrap().remove(&task_id);
+                    finished.remove(&task_id);
                 }
             }
         }
