@@ -6,7 +6,6 @@ use lockfree::map::{Insertion, Map, Removed};
 pub struct TaskQueue<T> {
     injector: Injector<T>,
     ready_stealers: Map<usize, Stealer<T>>,
-    blocked_stealers: Map<usize, Stealer<T>>,
 }
 
 impl<T> TaskQueue<T> {
@@ -14,7 +13,6 @@ impl<T> TaskQueue<T> {
         TaskQueue {
             injector: Injector::new(),
             ready_stealers: Map::new(),
-            blocked_stealers: Map::new(),
         }
     }
 
@@ -22,13 +20,9 @@ impl<T> TaskQueue<T> {
         let ready_worker = Worker::new_lifo();
         insert_into(&self.ready_stealers, ready_worker.stealer());
 
-        let blocked_worker = Worker::new_fifo();
-        insert_into(&self.blocked_stealers, ready_worker.stealer());
-
         Handle {
             queue: self.clone(),
             ready: ready_worker,
-            blocked: blocked_worker,
         }
     }
 
@@ -45,13 +39,6 @@ impl<T> TaskQueue<T> {
                 .next()
         };
         None.or_else(from_injector).or_else(from_shared_ready)
-    }
-
-    fn blocked_into(&self, worker: &Worker<T>) -> Option<T> {
-        self.blocked_stealers
-            .iter()
-            .filter_map(|entry| steal_into(worker, |_| entry.val().steal()))
-            .next()
     }
 }
 
@@ -92,7 +79,6 @@ fn steal_into<T>(worker: &Worker<T>, mut stealer: impl FnMut(&Worker<T>) -> Stea
 pub struct Handle<T> {
     queue: Arc<TaskQueue<T>>,
     ready: Worker<T>,
-    blocked: Worker<T>,
 }
 
 impl<T> Handle<T> {
@@ -100,16 +86,8 @@ impl<T> Handle<T> {
         self.ready.push(item);
     }
 
-    pub fn push_blocked(&self, item: T) {
-        self.blocked.push(item);
-    }
-
-    pub fn task_finished(&mut self) {}
-
     pub fn next(&mut self) -> Option<T> {
         None.or_else(|| self.ready.pop())
             .or_else(|| self.queue.ready_into(&self.ready))
-            .or_else(|| self.blocked.pop())
-            .or_else(|| self.queue.blocked_into(&self.blocked))
     }
 }

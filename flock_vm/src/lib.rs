@@ -7,13 +7,13 @@ use task_queue::TaskQueue;
 
 mod thread_runner;
 
-use lockfree::map::Map;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub struct Vm {
     bytecode: ByteCode,
     task_queue: Arc<TaskQueue<TaskState>>,
-    finished: Arc<Map<usize, TaskState>>,
+    sub_tasks: Mutex<HashMap<usize, SubTask>>,
 }
 
 impl Vm {
@@ -21,7 +21,7 @@ impl Vm {
         Vm {
             bytecode,
             task_queue: Arc::new(TaskQueue::<TaskState>::new()),
-            finished: Arc::new(Map::new()),
+            sub_tasks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -43,7 +43,7 @@ impl Vm {
                 let mut queue_handle = self_.task_queue.clone().handle();
                 loop {
                     let should_continue =
-                        self_.tick(&self_.bytecode, &mut queue_handle, &self_.finished)?;
+                        self_.tick(&self_.bytecode, &mut queue_handle)?;
                     if !should_continue {
                         return Ok(());
                     }
@@ -62,7 +62,6 @@ impl Vm {
         &self,
         bytecode: &ByteCode,
         queue_handle: &mut task_queue::Handle<TaskState>,
-        finished: &Map<usize, TaskState>,
     ) -> Result<bool, ExecutionError> {
         let mut task_state = match queue_handle.next() {
             None => return Ok(false),
@@ -71,8 +70,18 @@ impl Vm {
 
         match task_state.task.run(bytecode)? {
             Execution::Terminated => {
-                finished.insert(task_state.id, task_state);
-                queue_handle.task_finished();
+                let mut lock = self.sub_tasks.lock().unwrap();
+
+                let existing = lock.insert(task_state.id, SubTask::Finished(task_state));
+                match existing {
+                    Some(SubTask::Blocking(tasks)) => {
+                        for task in tasks {
+                            queue_handle.push(task);
+                        }
+                    }
+                    None => {}
+                    Some(SubTask::Finished(_)) => unreachable!(),
+                }
             }
             Execution::Fork => {
                 use rand::Rng;
@@ -91,24 +100,31 @@ impl Vm {
                 queue_handle.push(task_state);
             }
             Execution::Join { task_id, count } => {
-                let should_drop_task = if let Some(entry) = finished.get(&task_id) {
-                    let other_stack = &entry.val().task.stack;
-                    let to_push = other_stack.split_at(other_stack.len() - count).1;
-                    task_state.task.stack.extend(to_push.iter().cloned());
-                    queue_handle.push(task_state);
+                let mut sub_tasks = self.sub_tasks.lock().unwrap();
 
-                    true
-                } else {
-                    // TODO(shelbyd): Error with unrecognized task id.
-                    task_state.task.program_counter -= 1;
-                    task_state.task.stack.push(task_id as i64);
-
-                    queue_handle.push_blocked(task_state);
-                    false
+                let should_drop_task = match sub_tasks
+                    .entry(task_id)
+                    .or_insert(SubTask::Blocking(Vec::new()))
+                {
+                    SubTask::Blocking(blocked) => {
+                        // TODO(shelbyd): Error with unrecognized task id.
+                        task_state.task.program_counter -= 1;
+                        task_state.task.stack.push(task_id as i64);
+                        blocked.push(task_state);
+                        false
+                    }
+                    SubTask::Finished(joined) => {
+                        let other_stack = &joined.task.stack;
+                        let to_push = other_stack.split_at(other_stack.len() - count).1;
+                        task_state.task.stack.extend(to_push.iter().cloned());
+                        queue_handle.push(task_state);
+                        true
+                    }
                 };
+
                 // TODO(shelbyd): Workaround for lifetime of read guard.
                 if should_drop_task {
-                    finished.remove(&task_id);
+                    sub_tasks.remove(&task_id);
                 }
             }
         }
@@ -128,6 +144,12 @@ enum Execution {
     Terminated,
     Fork,
     Join { task_id: usize, count: usize },
+}
+
+#[derive(Debug)]
+enum SubTask {
+    Finished(TaskState),
+    Blocking(Vec<TaskState>),
 }
 
 #[derive(Debug, Clone)]
