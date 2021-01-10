@@ -11,7 +11,27 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
-    Vm::new().run(bytecode)
+    let vm = Vm::new();
+    let bytecode = Arc::new(bytecode);
+
+    vm.task_queue.push(TaskState {
+        id: 0,
+        task: Task::new(),
+    });
+
+    let mut threads = Vec::new();
+
+    let max_threads = usize::MAX;
+    for _ in 0..usize::min(max_threads, num_cpus::get()) {
+        let mut executor = vm.executor(&bytecode);
+        let thread = std::thread::spawn(move || executor.run());
+        threads.push(thread);
+    }
+
+    for thread in threads {
+        thread.join().unwrap()?;
+    }
+    Ok(())
 }
 
 pub struct Vm {
@@ -25,29 +45,6 @@ impl Vm {
             task_queue: Arc::new(TaskQueue::<TaskState>::new()),
             sub_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    fn run(&self, bytecode: ByteCode) -> Result<(), ExecutionError> {
-        let bytecode = Arc::new(bytecode);
-
-        self.task_queue.push(TaskState {
-            id: 0,
-            task: Task::new(),
-        });
-
-        let mut threads = Vec::new();
-
-        let max_threads = usize::MAX;
-        for _ in 0..usize::min(max_threads, num_cpus::get()) {
-            let mut executor = self.executor(&bytecode);
-            let thread = std::thread::spawn(move || executor.run());
-            threads.push(thread);
-        }
-
-        for thread in threads {
-            thread.join().unwrap()?;
-        }
-        Ok(())
     }
 
     fn executor(&self, bytecode: &Arc<ByteCode>) -> Executor {
