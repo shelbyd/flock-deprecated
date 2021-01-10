@@ -16,7 +16,7 @@ impl<T> TaskQueue<T> {
         }
     }
 
-    pub fn handle(self: Arc<Self>) -> Handle<T> {
+    pub fn handle(self: &Arc<Self>) -> Handle<T> {
         let ready_worker = Worker::new_lifo();
         insert_into(&self.ready_stealers, ready_worker.stealer());
 

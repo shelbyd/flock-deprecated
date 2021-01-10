@@ -10,25 +10,27 @@ mod thread_runner;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
+    Vm::new().run(bytecode)
+}
+
 pub struct Vm {
-    bytecode: ByteCode,
     task_queue: Arc<TaskQueue<TaskState>>,
-    sub_tasks: Mutex<HashMap<usize, SubTask>>,
+    sub_tasks: Arc<Mutex<HashMap<usize, SubTask>>>,
 }
 
 impl Vm {
-    pub fn new(bytecode: ByteCode) -> Vm {
+    fn new() -> Vm {
         Vm {
-            bytecode,
             task_queue: Arc::new(TaskQueue::<TaskState>::new()),
-            sub_tasks: Mutex::new(HashMap::new()),
+            sub_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn run(self) -> Result<(), ExecutionError> {
-        let self_ = Arc::new(self);
+    fn run(&self, bytecode: ByteCode) -> Result<(), ExecutionError> {
+        let bytecode = Arc::new(bytecode);
 
-        self_.task_queue.push(TaskState {
+        self.task_queue.push(TaskState {
             id: 0,
             task: Task::new(),
         });
@@ -37,17 +39,8 @@ impl Vm {
 
         let max_threads = usize::MAX;
         for _ in 0..usize::min(max_threads, num_cpus::get()) {
-            let self_ = self_.clone();
-
-            let thread = std::thread::spawn(move || -> Result<_, ExecutionError> {
-                let mut queue_handle = self_.task_queue.clone().handle();
-                loop {
-                    let should_continue = self_.tick(&self_.bytecode, &mut queue_handle)?;
-                    if !should_continue {
-                        return Ok(());
-                    }
-                }
-            });
+            let mut executor = self.executor(&bytecode);
+            let thread = std::thread::spawn(move || executor.run());
             threads.push(thread);
         }
 
@@ -57,17 +50,34 @@ impl Vm {
         Ok(())
     }
 
-    fn tick(
-        &self,
-        bytecode: &ByteCode,
-        queue_handle: &mut task_queue::Handle<TaskState>,
-    ) -> Result<bool, ExecutionError> {
-        let mut task_state = match queue_handle.next() {
+    fn executor(&self, bytecode: &Arc<ByteCode>) -> Executor {
+        Executor {
+            handle: self.task_queue.handle(),
+            bytecode: bytecode.clone(),
+            sub_tasks: self.sub_tasks.clone(),
+        }
+    }
+}
+
+struct Executor {
+    handle: task_queue::Handle<TaskState>,
+    bytecode: Arc<ByteCode>,
+    sub_tasks: Arc<Mutex<HashMap<usize, SubTask>>>,
+}
+
+impl Executor {
+    fn run(&mut self) -> Result<(), ExecutionError> {
+        while self.tick()? {}
+        Ok(())
+    }
+
+    fn tick(&mut self) -> Result<bool, ExecutionError> {
+        let mut task_state = match self.handle.next() {
             None => return Ok(false),
             Some(t) => t,
         };
 
-        match task_state.task.run(bytecode)? {
+        match task_state.task.run(&self.bytecode)? {
             Execution::Terminated => {
                 let mut lock = self.sub_tasks.lock().unwrap();
 
@@ -75,7 +85,7 @@ impl Vm {
                 match existing {
                     Some(SubTask::Blocking(tasks)) => {
                         for task in tasks {
-                            queue_handle.push(task);
+                            self.handle.push(task);
                         }
                     }
                     None => {}
@@ -95,14 +105,16 @@ impl Vm {
                 forked.task.stack.push(task_state.id as i64);
                 task_state.task.stack.push(forked.id as i64);
 
-                queue_handle.push(forked);
-                queue_handle.push(task_state);
+                self.handle.push(forked);
+                self.handle.push(task_state);
             }
             Execution::Join { task_id, count } => {
                 let mut sub_tasks = self.sub_tasks.lock().unwrap();
 
                 // TODO(shelbyd): Error with unrecognized task id.
-                let sub_task = sub_tasks.remove(&task_id).unwrap_or(SubTask::Blocking(Vec::new()));
+                let sub_task = sub_tasks
+                    .remove(&task_id)
+                    .unwrap_or(SubTask::Blocking(Vec::new()));
                 match sub_task {
                     SubTask::Blocking(mut blocked) => {
                         task_state.task.program_counter -= 1;
@@ -114,7 +126,7 @@ impl Vm {
                         let other_stack = &joined.task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
-                        queue_handle.push(task_state);
+                        self.handle.push(task_state);
                     }
                 }
             }
@@ -193,15 +205,11 @@ impl Task {
                 };
 
                 let should_jump = {
-                    if flags.is_empty() {
-                        true
-                    } else {
-                        let zero = flags
-                            .contains(ConditionFlags::ZERO)
-                            .implies(*self.peek()? == 0);
-                        let forked = flags.contains(ConditionFlags::FORK).implies(self.forked);
-                        zero && forked
-                    }
+                    let zero = flags
+                        .contains(ConditionFlags::ZERO)
+                        .implies(*self.peek()? == 0);
+                    let forked = flags.contains(ConditionFlags::FORK).implies(self.forked);
+                    zero && forked
                 };
                 if should_jump {
                     self.program_counter = target as usize;
@@ -250,13 +258,6 @@ impl Task {
                 return Ok(ControlFlow::Return(Execution::Fork));
             }
             OpCode::Join(count) => {
-                // self.print_debug(bytecode);
-                // {
-                //     use std::io::BufRead;
-                //     let stdin = std::io::stdin();
-                //     stdin.lock().read_line(&mut String::new()).unwrap();
-                // }
-
                 let task_id = self.pop()? as usize;
                 return Ok(ControlFlow::Return(Execution::Join {
                     task_id,

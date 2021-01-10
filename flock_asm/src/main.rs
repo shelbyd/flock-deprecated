@@ -39,7 +39,7 @@ fn main() -> DynResult<()> {
 
     let bytecode = to_bytecode(&asm_statements)?;
 
-    flock_vm::Vm::new(bytecode).run()?;
+    flock_vm::run(bytecode)?;
 
     Ok(())
 }
