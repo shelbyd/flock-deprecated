@@ -42,8 +42,7 @@ impl Vm {
             let thread = std::thread::spawn(move || -> Result<_, ExecutionError> {
                 let mut queue_handle = self_.task_queue.clone().handle();
                 loop {
-                    let should_continue =
-                        self_.tick(&self_.bytecode, &mut queue_handle)?;
+                    let should_continue = self_.tick(&self_.bytecode, &mut queue_handle)?;
                     if !should_continue {
                         return Ok(());
                     }
@@ -102,29 +101,21 @@ impl Vm {
             Execution::Join { task_id, count } => {
                 let mut sub_tasks = self.sub_tasks.lock().unwrap();
 
-                let should_drop_task = match sub_tasks
-                    .entry(task_id)
-                    .or_insert(SubTask::Blocking(Vec::new()))
-                {
-                    SubTask::Blocking(blocked) => {
-                        // TODO(shelbyd): Error with unrecognized task id.
+                // TODO(shelbyd): Error with unrecognized task id.
+                let sub_task = sub_tasks.remove(&task_id).unwrap_or(SubTask::Blocking(Vec::new()));
+                match sub_task {
+                    SubTask::Blocking(mut blocked) => {
                         task_state.task.program_counter -= 1;
                         task_state.task.stack.push(task_id as i64);
                         blocked.push(task_state);
-                        false
+                        sub_tasks.insert(task_id, SubTask::Blocking(blocked));
                     }
                     SubTask::Finished(joined) => {
                         let other_stack = &joined.task.stack;
                         let to_push = other_stack.split_at(other_stack.len() - count).1;
                         task_state.task.stack.extend(to_push.iter().cloned());
                         queue_handle.push(task_state);
-                        true
                     }
-                };
-
-                // TODO(shelbyd): Workaround for lifetime of read guard.
-                if should_drop_task {
-                    sub_tasks.remove(&task_id);
                 }
             }
         }
