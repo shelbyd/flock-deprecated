@@ -58,14 +58,12 @@ impl Vm {
     }
 
     fn block_on_task(&mut self, task_id: usize) -> Result<(), ExecutionError> {
-        let mut threads = Vec::new();
-
-        let max_threads = usize::MAX;
-        for _ in 0..usize::min(max_threads, num_cpus::get()) {
-            let mut executor = self.executor();
-            let thread = std::thread::spawn(move || executor.run());
-            threads.push(thread);
-        }
+        let threads = (0..num_cpus::get())
+            .map(|_| {
+                let mut executor = self.executor();
+                std::thread::spawn(move || executor.run())
+            })
+            .collect::<Vec<_>>();
 
         for thread in threads {
             thread.join().unwrap()?;
