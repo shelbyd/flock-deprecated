@@ -36,7 +36,7 @@ pub struct Vm {
 }
 
 impl Vm {
-    fn create() -> Vm {
+    pub fn create() -> Vm {
         Vm {
             task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
             sub_tasks: Arc::new(Mutex::new(HashMap::new())),
@@ -44,7 +44,7 @@ impl Vm {
         }
     }
 
-    fn connect() -> Option<Vm> {
+    pub fn connect() -> Option<Vm> {
         None
     }
 
@@ -58,12 +58,27 @@ impl Vm {
     }
 
     fn block_on_task(&mut self, task_id: usize) -> Result<(), ExecutionError> {
-        let threads = (0..num_cpus::get())
+        let mut threads = (0..num_cpus::get())
             .map(|_| {
                 let mut executor = self.executor();
                 std::thread::spawn(move || executor.run())
             })
             .collect::<Vec<_>>();
+
+        let message_sender = std::thread::spawn(|| {
+            use std::time::*;
+
+            let mut node = flock_rpc::Node::<Message>::new(18455).unwrap();
+            node.connect("127.0.0.1:18454").unwrap();
+            for _ in 0..3 {
+                node.broadcast(Message::Test).unwrap();
+                std::thread::sleep(Duration::from_millis(1000));
+            }
+            std::thread::sleep(Duration::from_millis(3000));
+            Ok(())
+        });
+
+        threads.push(message_sender);
 
         for thread in threads {
             thread.join().unwrap()?;
@@ -172,4 +187,10 @@ struct TaskOrder {
 enum SubTask {
     Finished(TaskOrder),
     Blocking(Vec<TaskOrder>),
+}
+
+use serde::{Deserialize, Serialize};
+#[derive(Deserialize, Serialize, Debug)]
+pub enum Message {
+    Test,
 }
