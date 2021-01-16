@@ -92,12 +92,10 @@ impl Executor {
     }
 
     fn busy_tick(&mut self) -> Result<bool, ExecutionError> {
+        // TODO(shelbyd): Block while tasks may come in.
         if let Some(mut next) = self.handle.next() {
             self.run_to_completion(&mut next)?;
-            let already_there = self.finished
-                .lock()
-                .unwrap()
-                .insert(next.id, next);
+            let already_there = self.finished.lock().unwrap().insert(next.id, next);
             assert!(already_there.is_none());
             Ok(true)
         } else {
@@ -106,9 +104,12 @@ impl Executor {
     }
 
     fn run_to_completion(&mut self, task_order: &mut TaskOrder) -> Result<(), ExecutionError> {
+        // TODO(shelbyd): Never overflow stack.
         loop {
             match task_order.task.run(&self.bytecode)? {
-                Execution::Terminated => return Ok(()),
+                Execution::Terminated => {
+                    return Ok(());
+                }
                 Execution::Fork => {
                     use rand::Rng;
 
