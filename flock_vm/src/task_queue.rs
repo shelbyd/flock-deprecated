@@ -26,10 +26,6 @@ impl<T> TaskQueue<T> {
         }
     }
 
-    pub fn push(&self, item: T) {
-        self.injector.push(item);
-    }
-
     fn ready_into(&self, worker: &Worker<T>) -> Option<T> {
         let from_injector = || steal_into(worker, |_| self.injector.steal());
         let from_shared_ready = || {
