@@ -3,7 +3,7 @@
 main:
   ; This number is large enough that the calculation takes a while with a single core.
   ; So we can see the effects of forking.
-  PUSH 30
+  PUSH 35
 
   FORK
   BURY 1

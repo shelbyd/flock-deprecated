@@ -10,8 +10,9 @@ use task_queue::TaskQueue;
 
 mod thread_runner;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use dashmap::DashMap;
 
 pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
     let mut vm = Vm::connect().unwrap_or_else(|| Vm::create());
@@ -29,7 +30,7 @@ pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
 
 pub struct Vm {
     task_queue: Arc<TaskQueue<TaskOrder>>,
-    finished: Arc<Mutex<HashMap<usize, TaskOrder>>>,
+    finished: Arc<DashMap<usize, TaskOrder>>,
     bytecode_registry: Option<Arc<ByteCode>>,
 }
 
@@ -37,7 +38,7 @@ impl Vm {
     pub fn create() -> Vm {
         Vm {
             task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
-            finished: Arc::new(Mutex::new(HashMap::new())),
+            finished: Arc::new(DashMap::new()),
             bytecode_registry: None,
         }
     }
@@ -65,7 +66,7 @@ impl Vm {
             thread.join().unwrap()?;
         }
 
-        assert_eq!(self.finished.lock().unwrap().len(), 0);
+        assert_eq!(self.finished.len(), 0);
 
         Ok(())
     }
@@ -82,7 +83,7 @@ impl Vm {
 struct Executor {
     handle: task_queue::Handle<TaskOrder>,
     bytecode: Arc<ByteCode>,
-    finished: Arc<Mutex<HashMap<usize, TaskOrder>>>,
+    finished: Arc<DashMap<usize, TaskOrder>>,
 }
 
 impl Executor {
@@ -92,10 +93,9 @@ impl Executor {
     }
 
     fn busy_tick(&mut self) -> Result<bool, ExecutionError> {
-        // TODO(shelbyd): Block while tasks may come in.
         if let Some(mut next) = self.handle.next() {
             self.run_to_completion(&mut next)?;
-            let already_there = self.finished.lock().unwrap().insert(next.id, next);
+            let already_there = self.finished.insert(next.id, next);
             assert!(already_there.is_none());
             Ok(true)
         } else {
@@ -138,8 +138,8 @@ impl Executor {
     fn busy_until_task_done(&mut self, task_id: usize) -> Result<TaskOrder, ExecutionError> {
         loop {
             // TODO(shelbyd): Error with unrecognized task id.
-            if let Some(done) = self.finished.lock().unwrap().remove(&task_id) {
-                return Ok(done);
+            if let Some(done) = self.finished.remove(&task_id) {
+                return Ok(done.1);
             }
             self.busy_tick()?;
         }
