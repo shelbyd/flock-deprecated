@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use flume::*;
 
 pub struct TaskQueue<T> {
-    sender: Sender<T>,
-    receiver: Receiver<T>,
+    sender: Sender<ControlFlow<T>>,
+    receiver: Receiver<ControlFlow<T>>,
 }
 
 impl<T> TaskQueue<T> {
@@ -20,12 +20,32 @@ impl<T> TaskQueue<T> {
             receiver: self.receiver.clone(),
         }
     }
+
+    pub fn finish<F: FnOnce() -> R, R>(&self, task_closer: F) -> R {
+        self.sender.send(ControlFlow::Finish).unwrap();
+        let result = task_closer();
+        match self
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+        {
+            Ok(ControlFlow::Finish) => {}
+            _ => unreachable!(),
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+pub enum ControlFlow<T> {
+    Continue(T),
+    Retry,
+    Finish,
 }
 
 pub struct Handle<T> {
     local_work: VecDeque<T>,
-    sender: Sender<T>,
-    receiver: Receiver<T>,
+    sender: Sender<ControlFlow<T>>,
+    receiver: Receiver<ControlFlow<T>>,
 }
 
 impl<T> Handle<T> {
@@ -33,7 +53,7 @@ impl<T> Handle<T> {
         self.local_work.push_back(item);
         if let Some(amount) = self.push_to_shared() {
             for work in self.local_work.drain(..amount) {
-                self.sender.send(work).unwrap();
+                self.sender.send(ControlFlow::Continue(work)).unwrap();
             }
         }
     }
@@ -46,11 +66,23 @@ impl<T> Handle<T> {
         }
     }
 
-    pub fn next(&mut self) -> Option<T> {
+    pub fn next(&mut self) -> ControlFlow<T> {
         if let Some(local) = self.local_work.pop_back() {
-            return Some(local);
+            return ControlFlow::Continue(local);
         }
-        // TODO(shelbyd): Do something intelligent when all workers are done.
-        self.receiver.recv_timeout(std::time::Duration::from_millis(10)).ok()
+
+        match self
+            .receiver
+            .recv_timeout(std::time::Duration::from_millis(1))
+        {
+            Ok(ControlFlow::Continue(t)) => ControlFlow::Continue(t),
+            Ok(ControlFlow::Finish) => {
+                self.sender.send(ControlFlow::Finish).unwrap();
+                ControlFlow::Finish
+            }
+            Ok(ControlFlow::Retry) => unreachable!(),
+            Err(RecvTimeoutError::Timeout) => ControlFlow::Retry,
+            Err(RecvTimeoutError::Disconnected) => ControlFlow::Finish,
+        }
     }
 }

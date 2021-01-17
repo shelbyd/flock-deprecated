@@ -6,7 +6,7 @@ mod task;
 use task::*;
 
 mod task_queue;
-use task_queue::TaskQueue;
+use task_queue::{ControlFlow, TaskQueue};
 
 mod thread_runner;
 
@@ -62,9 +62,12 @@ impl Vm {
 
         self.executor().run_to_completion(&mut task_order)?;
 
-        for thread in threads {
-            thread.join().unwrap()?;
-        }
+        self.task_queue.finish(move || {
+            for thread in threads {
+                thread.join().unwrap()?;
+            }
+            Ok(())
+        })?;
 
         assert_eq!(self.finished.len(), 0);
 
@@ -93,14 +96,16 @@ impl Executor {
     }
 
     fn busy_tick(&mut self) -> Result<bool, ExecutionError> {
-        if let Some(mut next) = self.handle.next() {
-            self.run_to_completion(&mut next)?;
-            let already_there = self.finished.insert(next.id, next);
-            assert!(already_there.is_none());
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let mut next = match self.handle.next() {
+            ControlFlow::Continue(n) => n,
+            ControlFlow::Finish => return Ok(false),
+            ControlFlow::Retry => return Ok(true),
+        };
+
+        self.run_to_completion(&mut next)?;
+        let already_there = self.finished.insert(next.id, next);
+        assert!(already_there.is_none());
+        Ok(true)
     }
 
     fn run_to_completion(&mut self, task_order: &mut TaskOrder) -> Result<(), ExecutionError> {
