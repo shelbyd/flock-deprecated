@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ExecutionError, TaskOrder};
+use crate::{ExecutionError, TaskOrder, Vm};
+use std::sync::Arc;
 use tokio_serde::formats::Json;
 
 gflags::define! {
@@ -55,7 +56,9 @@ impl Cluster {
                     .run_to_completion(tarpc::context::current(), task_order.clone())
                     .await
                 {
-                    Err(_) => {}
+                    Err(e) => {
+                        dbg!(e);
+                    }
                     Ok(Ok(to)) => return Some(Ok(to)),
                     Ok(Err(execution)) => return Some(Err(RunError::Execution(execution))),
                 }
@@ -76,10 +79,16 @@ trait ClusterService {
     async fn run_to_completion(task_order: TaskOrder) -> Result<TaskOrder, ExecutionError>;
 }
 
-#[derive(Clone, Copy)]
-pub struct ClusterServer;
+#[derive(Clone)]
+pub struct ClusterServer {
+    vm: Arc<Vm>,
+}
 
 impl ClusterServer {
+    pub fn new(vm: Vm) -> Self {
+        ClusterServer { vm: Arc::new(vm) }
+    }
+
     pub async fn listen(self) -> std::io::Result<()> {
         use futures::*;
         use tarpc::{
@@ -95,7 +104,7 @@ impl ClusterServer {
             .filter_map(|r| future::ready(r.ok()))
             .map(server::BaseChannel::with_defaults)
             .max_channels_per_key(1, |t| t.as_ref().peer_addr().unwrap().ip())
-            .map(|channel| channel.respond_with(self.serve()).execute())
+            .map(|channel| channel.respond_with(self.clone().serve()).execute())
             .buffer_unordered(10)
             .for_each(|_| async {})
             .await;
@@ -110,7 +119,16 @@ impl ClusterService for ClusterServer {
         _: tarpc::context::Context,
         task_order: TaskOrder,
     ) -> Result<TaskOrder, ExecutionError> {
-        Err(ExecutionError::UnknownTaskId(0))
+        let id = task_order.id;
+        self.vm.enqueue(task_order);
+        let mut interval = tokio::time::interval(core::time::Duration::from_millis(1));
+
+        loop {
+            interval.tick().await;
+            if let Some(task_order) = self.vm.take_finished(id) {
+                return Ok(task_order);
+            }
+        }
     }
 }
 

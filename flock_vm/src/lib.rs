@@ -43,7 +43,7 @@ pub struct Vm {
     task_queue: Arc<TaskQueue<TaskOrder>>,
     finished: Arc<DashMap<usize, TaskOrder>>,
     bytecode_registry: Option<Arc<ByteCode>>,
-    cluster: Arc<Cluster>,
+    cluster: Option<Arc<Cluster>>,
 }
 
 impl Vm {
@@ -52,7 +52,16 @@ impl Vm {
             task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
             finished: Arc::new(DashMap::new()),
             bytecode_registry: None,
-            cluster: Arc::new(Cluster::connect()),
+            cluster: Some(Arc::new(Cluster::connect())),
+        }
+    }
+
+    pub fn create_leaf() -> Vm {
+        Vm {
+            task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
+            finished: Arc::new(DashMap::new()),
+            bytecode_registry: None,
+            cluster: None,
         }
     }
 
@@ -77,15 +86,18 @@ impl Vm {
             })
             .collect::<Vec<_>>();
 
-        threads.extend((0..REMOTE_WORKERS.flag).map(|_| {
-            let mut executor = self.remote_executor();
-            let thread_rx = exit_tx.clone();
-            std::thread::spawn(move || {
-                if let Some(exit) = executor.run().into_exit() {
-                    thread_rx.send(exit).unwrap();
-                }
-            })
-        }));
+        threads.extend(
+            (0..REMOTE_WORKERS.flag)
+                .filter_map(|_| self.remote_executor())
+                .map(|mut executor| {
+                    let thread_rx = exit_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(exit) = executor.run().into_exit() {
+                            thread_rx.send(exit).unwrap();
+                        }
+                    })
+                }),
+        );
 
         threads.push({
             let mut executor = self.executor();
@@ -122,12 +134,20 @@ impl Vm {
         }
     }
 
-    fn remote_executor(&self) -> RemoteExecutor {
-        RemoteExecutor {
+    fn remote_executor(&self) -> Option<RemoteExecutor> {
+        self.cluster.as_ref().map(|cluster| RemoteExecutor {
             handle: self.task_queue.handle(),
             finished: self.finished.clone(),
-            cluster: self.cluster.clone(),
-        }
+            cluster: cluster.clone(),
+        })
+    }
+
+    fn enqueue(&self, task_order: TaskOrder) {
+        self.task_queue.push(task_order);
+    }
+
+    fn take_finished(&self, id: usize) -> Option<TaskOrder> {
+        self.finished.remove(&id).map(|pair| pair.1)
     }
 }
 

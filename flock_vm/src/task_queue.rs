@@ -36,6 +36,10 @@ impl<T> TaskQueue<T> {
         }
         result
     }
+
+    pub fn push(&self, t: T) {
+        self.sender.send(ControlFlow::Continue(t)).unwrap();
+    }
 }
 
 #[derive(Debug)]
