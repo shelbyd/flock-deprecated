@@ -24,12 +24,15 @@ impl<T> TaskQueue<T> {
     pub fn finish<F: FnOnce() -> R, R>(&self, task_closer: F) -> R {
         self.sender.send(ControlFlow::Finish).unwrap();
         let result = task_closer();
-        match self
-            .receiver
-            .recv_timeout(std::time::Duration::from_secs(1))
-        {
-            Ok(ControlFlow::Finish) => {}
-            _ => unreachable!(),
+        loop {
+            match self
+                .receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+            {
+                Ok(ControlFlow::Finish) => break,
+                Ok(ControlFlow::Continue(_)) => {}
+                _ => unreachable!(),
+            }
         }
         result
     }

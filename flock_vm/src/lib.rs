@@ -17,6 +17,14 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
+gflags::define! {
+    pub --remote-workers: u16 = 1
+}
+
+gflags::define! {
+    pub --max-local-workers: usize = usize::MAX
+}
+
 pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
     let mut vm = Vm::create();
     let bytecode = Arc::new(bytecode);
@@ -54,27 +62,52 @@ impl Vm {
     }
 
     fn block_on_task(&mut self, mut task_order: TaskOrder) -> Result<(), ExecutionError> {
-        // TODO(shelbyd): Error early when background or remote execution errors.
-        let mut threads = (0..num_cpus::get())
+        let (exit_tx, exit_rx) = std::sync::mpsc::channel::<Exit>();
+
+        let local_workers = std::cmp::min(num_cpus::get(), MAX_LOCAL_WORKERS.flag);
+        let mut threads = (0..local_workers)
             .map(|_| {
                 let mut executor = self.executor();
-                std::thread::spawn(move || executor.run())
+                let thread_rx = exit_tx.clone();
+                std::thread::spawn(move || {
+                    if let Some(exit) = executor.run().into_exit() {
+                        thread_rx.send(exit).unwrap();
+                    }
+                })
             })
             .collect::<Vec<_>>();
 
-        threads.extend((0..1).map(|_| {
+        threads.extend((0..REMOTE_WORKERS.flag).map(|_| {
             let mut executor = self.remote_executor();
-            std::thread::spawn(move || executor.run())
+            let thread_rx = exit_tx.clone();
+            std::thread::spawn(move || {
+                if let Some(exit) = executor.run().into_exit() {
+                    thread_rx.send(exit).unwrap();
+                }
+            })
         }));
 
-        self.executor().run_to_completion(&mut task_order)?;
+        threads.push({
+            let mut executor = self.executor();
+            let thread_rx = exit_tx.clone();
+            std::thread::spawn(move || {
+                let exit = Exit::Completion(executor.run_to_completion(&mut task_order));
+                thread_rx.send(exit).unwrap();
+            })
+        });
+
+        let exit = exit_rx.recv();
 
         self.task_queue.finish(move || {
             for thread in threads {
-                thread.join().unwrap()?;
+                thread.join().unwrap();
             }
-            Ok(())
-        })?;
+        });
+
+        match exit.unwrap() {
+            Exit::ExecutionError(e) => return Err(e),
+            Exit::Completion(r) => r?,
+        }
 
         assert_eq!(self.finished.len(), 0);
 
@@ -94,6 +127,25 @@ impl Vm {
             handle: self.task_queue.handle(),
             finished: self.finished.clone(),
             cluster: self.cluster.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Exit {
+    ExecutionError(ExecutionError),
+    Completion(Result<(), ExecutionError>),
+}
+
+trait IntoExit {
+    fn into_exit(self) -> Option<Exit>;
+}
+
+impl IntoExit for Result<(), ExecutionError> {
+    fn into_exit(self) -> Option<Exit> {
+        match self {
+            Ok(_) => None,
+            Err(e) => Some(Exit::ExecutionError(e)),
         }
     }
 }
@@ -161,7 +213,9 @@ impl Executor {
             if let Some(done) = self.finished.remove(&task_id) {
                 return Ok(done.1);
             }
-            self.busy_tick()?;
+            if !self.busy_tick()? {
+                return Err(ExecutionError::UnableToProgress);
+            }
         }
     }
 }
@@ -187,10 +241,7 @@ impl RemoteExecutor {
                         self.handle.push(order);
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     }
-                    Err(RunError::Execution(e)) => {
-                        dbg!(&e);
-                        return Err(e);
-                    },
+                    Err(RunError::Execution(e)) => return Err(e),
                 },
             }
         }

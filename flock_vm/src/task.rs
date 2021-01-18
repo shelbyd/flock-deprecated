@@ -159,6 +159,7 @@ pub enum ExecutionError {
     DredgeOutOfRange(i64),
     BuryOutOfRange(i64),
     UnknownTaskId(usize),
+    UnableToProgress,
 }
 
 impl std::error::Error for ExecutionError {}

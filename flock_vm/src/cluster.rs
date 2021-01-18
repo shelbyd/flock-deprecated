@@ -48,23 +48,21 @@ impl Cluster {
         if self.peers.len() == 0 {
             return Err(RunError::CouldNotRun(task_order));
         }
-        let from_remote = self.runtime
-            .block_on(async {
-                for peer in self.peers.iter() {
-                    let mut client = peer.clone();
-                    match client
-                        .run_to_completion(tarpc::context::current(), task_order.clone())
-                        .await
-                    {
-                        Err(_) => {}
-                        Ok(Ok(to)) => return Some(Ok(to)),
-                        Ok(Err(execution)) => return Some(Err(RunError::Execution(execution))),
-                    }
+        let from_remote = self.runtime.block_on(async {
+            for peer in self.peers.iter() {
+                let mut client = peer.clone();
+                match client
+                    .run_to_completion(tarpc::context::current(), task_order.clone())
+                    .await
+                {
+                    Err(_) => {}
+                    Ok(Ok(to)) => return Some(Ok(to)),
+                    Ok(Err(execution)) => return Some(Err(RunError::Execution(execution))),
                 }
-                None
-            });
-        from_remote
-            .unwrap_or_else(|| Err(RunError::CouldNotRun(task_order)))
+            }
+            None
+        });
+        from_remote.unwrap_or_else(|| Err(RunError::CouldNotRun(task_order)))
     }
 }
 
