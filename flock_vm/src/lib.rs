@@ -39,9 +39,11 @@ pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
     Ok(())
 }
 
+type FinishedMap = DashMap<usize, Result<TaskOrder, ExecutionError>>;
+
 pub struct Vm {
     task_queue: Arc<TaskQueue<TaskOrder>>,
-    finished: Arc<DashMap<usize, TaskOrder>>,
+    finished: Arc<FinishedMap>,
     bytecode_registry: Option<Arc<ByteCode>>,
     cluster: Option<Arc<Cluster>>,
 }
@@ -70,45 +72,22 @@ impl Vm {
         0
     }
 
-    fn block_on_task(&mut self, mut task_order: TaskOrder) -> Result<(), ExecutionError> {
-        let (exit_tx, exit_rx) = std::sync::mpsc::channel::<Exit>();
-
+    fn block_on_task(&mut self, task_order: TaskOrder) -> Result<(), ExecutionError> {
         let local_workers = std::cmp::min(num_cpus::get(), MAX_LOCAL_WORKERS.flag);
         let mut threads = (0..local_workers)
             .map(|_| {
                 let mut executor = self.executor();
-                let thread_rx = exit_tx.clone();
-                std::thread::spawn(move || {
-                    if let Some(exit) = executor.run().into_exit() {
-                        thread_rx.send(exit).unwrap();
-                    }
-                })
+                std::thread::spawn(move || executor.run())
             })
             .collect::<Vec<_>>();
 
         threads.extend(
             (0..REMOTE_WORKERS.flag)
                 .filter_map(|_| self.remote_executor())
-                .map(|mut executor| {
-                    let thread_rx = exit_tx.clone();
-                    std::thread::spawn(move || {
-                        if let Some(exit) = executor.run().into_exit() {
-                            thread_rx.send(exit).unwrap();
-                        }
-                    })
-                }),
+                .map(|mut executor| std::thread::spawn(move || executor.run())),
         );
 
-        threads.push({
-            let mut executor = self.executor();
-            let thread_rx = exit_tx.clone();
-            std::thread::spawn(move || {
-                let exit = Exit::Completion(executor.run_to_completion(&mut task_order));
-                thread_rx.send(exit).unwrap();
-            })
-        });
-
-        let exit = exit_rx.recv();
+        let result = self.executor().run_to_completion(task_order);
 
         self.task_queue.finish(move || {
             for thread in threads {
@@ -116,10 +95,7 @@ impl Vm {
             }
         });
 
-        match exit.unwrap() {
-            Exit::ExecutionError(e) => return Err(e),
-            Exit::Completion(r) => r?,
-        }
+        result?;
 
         assert_eq!(self.finished.len(), 0);
 
@@ -146,61 +122,45 @@ impl Vm {
         self.task_queue.push(task_order);
     }
 
-    fn take_finished(&self, id: usize) -> Option<TaskOrder> {
+    fn take_finished(&self, id: usize) -> Option<Result<TaskOrder, ExecutionError>> {
         self.finished.remove(&id).map(|pair| pair.1)
-    }
-}
-
-#[derive(Debug)]
-enum Exit {
-    ExecutionError(ExecutionError),
-    Completion(Result<(), ExecutionError>),
-}
-
-trait IntoExit {
-    fn into_exit(self) -> Option<Exit>;
-}
-
-impl IntoExit for Result<(), ExecutionError> {
-    fn into_exit(self) -> Option<Exit> {
-        match self {
-            Ok(_) => None,
-            Err(e) => Some(Exit::ExecutionError(e)),
-        }
     }
 }
 
 struct Executor {
     handle: task_queue::Handle<TaskOrder>,
     bytecode: Arc<ByteCode>,
-    finished: Arc<DashMap<usize, TaskOrder>>,
+    finished: Arc<FinishedMap>,
 }
 
 impl Executor {
-    fn run(&mut self) -> Result<(), ExecutionError> {
-        while self.busy_tick()? {}
-        Ok(())
+    fn run(&mut self) {
+        while self.busy_tick() {}
     }
 
-    fn busy_tick(&mut self) -> Result<bool, ExecutionError> {
-        let mut next = match self.handle.next() {
+    fn busy_tick(&mut self) -> bool {
+        let next = match self.handle.next() {
             ControlFlow::Continue(n) => n,
-            ControlFlow::Finish => return Ok(false),
-            ControlFlow::Retry => return Ok(true),
+            ControlFlow::Finish => return false,
+            ControlFlow::Retry => return true,
         };
+        let id = next.id;
 
-        self.run_to_completion(&mut next)?;
-        let already_there = self.finished.insert(next.id, next);
+        let result = self.run_to_completion(next);
+        let already_there = self.finished.insert(id, result);
         assert!(already_there.is_none());
-        Ok(true)
+        true
     }
 
-    fn run_to_completion(&mut self, task_order: &mut TaskOrder) -> Result<(), ExecutionError> {
+    fn run_to_completion(
+        &mut self,
+        mut task_order: TaskOrder,
+    ) -> Result<TaskOrder, ExecutionError> {
         // TODO(shelbyd): Never overflow stack.
         loop {
             match task_order.task.run(&self.bytecode)? {
                 Execution::Terminated => {
-                    return Ok(());
+                    return Ok(task_order);
                 }
                 Execution::Fork => {
                     use rand::Rng;
@@ -232,9 +192,9 @@ impl Executor {
         loop {
             // TODO(shelbyd): Error with unrecognized task id.
             if let Some(done) = self.finished.remove(&task_id) {
-                return Ok(done.1);
+                return done.1;
             }
-            if !self.busy_tick()? {
+            if !self.busy_tick() {
                 if last_failed {
                     return Err(ExecutionError::UnableToProgress);
                 }
@@ -246,27 +206,33 @@ impl Executor {
 
 struct RemoteExecutor {
     handle: task_queue::Handle<TaskOrder>,
-    finished: Arc<DashMap<usize, TaskOrder>>,
+    finished: Arc<FinishedMap>,
     cluster: Arc<Cluster>,
 }
 
 impl RemoteExecutor {
-    fn run(&mut self) -> Result<(), ExecutionError> {
+    fn run(&mut self) {
         loop {
             match self.handle.next() {
                 ControlFlow::Retry => continue,
-                ControlFlow::Finish => return Ok(()),
-                ControlFlow::Continue(task_order) => match self.cluster.run(task_order) {
-                    Ok(finished) => {
-                        let already_there = self.finished.insert(finished.id, finished);
-                        assert!(already_there.is_none());
+                ControlFlow::Finish => return,
+                ControlFlow::Continue(task_order) => {
+                    let id = task_order.id;
+                    match self.cluster.run(task_order) {
+                        Ok(finished) => {
+                            let already_there = self.finished.insert(id, Ok(finished));
+                            assert!(already_there.is_none());
+                        }
+                        Err(RunError::CouldNotRun(order)) => {
+                            self.handle.push(order);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(RunError::Execution(e)) => {
+                            let already_there = self.finished.insert(id, Err(e));
+                            assert!(already_there.is_none());
+                        }
                     }
-                    Err(RunError::CouldNotRun(order)) => {
-                        self.handle.push(order);
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(RunError::Execution(e)) => return Err(e),
-                },
+                }
             }
         }
     }

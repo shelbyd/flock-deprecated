@@ -126,7 +126,7 @@ impl ClusterService for ClusterServer {
         loop {
             interval.tick().await;
             if let Some(task_order) = self.vm.take_finished(id) {
-                return Ok(task_order);
+                return task_order;
             }
         }
     }
