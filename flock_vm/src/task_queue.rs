@@ -36,10 +36,6 @@ impl<T> TaskQueue<T> {
         }
         result
     }
-
-    pub fn push(&self, t: T) {
-        self.sender.send(ControlFlow::Continue(t)).unwrap();
-    }
 }
 
 #[derive(Debug)]
@@ -63,6 +59,10 @@ impl<T> Handle<T> {
                 self.sender.send(ControlFlow::Continue(work)).unwrap();
             }
         }
+    }
+
+    pub fn push_nonworker(&self, item: T) {
+        self.sender.send(ControlFlow::Continue(item)).unwrap();
     }
 
     fn push_to_shared(&mut self) -> Option<usize> {

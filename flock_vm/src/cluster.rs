@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ExecutionError, TaskOrder, Vm};
+use crate::{ExecutionError, TaskOrder, VmHandle};
 use std::sync::Arc;
 use tokio_serde::formats::Json;
 
@@ -20,11 +20,14 @@ pub enum Message {
 pub struct Cluster {
     runtime: tokio::runtime::Runtime,
     peers: Vec<ClusterServiceClient>,
+    vm: Arc<VmHandle>,
 }
 
 impl Cluster {
-    pub fn connect() -> Cluster {
+    pub fn connect(handle: &Arc<VmHandle>) -> Cluster {
         let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.spawn(ClusterServer::new(handle).listen());
 
         let peers = runtime.block_on(async {
             if REMOTE_CONNECTION.is_present() {
@@ -42,30 +45,52 @@ impl Cluster {
             }
         });
 
-        Cluster { runtime, peers }
+        Cluster {
+            runtime,
+            peers,
+            vm: handle.clone(),
+        }
     }
 
     pub(crate) fn run(&self, task_order: TaskOrder) -> Result<TaskOrder, RunError> {
-        if self.peers.len() == 0 {
-            return Err(RunError::CouldNotRun(task_order));
-        }
+        eprintln!("Requesting remote execution of task {}", task_order.id);
         let from_remote = self.runtime.block_on(async {
             for peer in self.peers.iter() {
-                let mut client = peer.clone();
-                match client
-                    .run_to_completion(tarpc::context::current(), task_order.clone())
-                    .await
-                {
+                match self.run_on_peer(&task_order, peer.clone()).await {
                     Err(e) => {
                         dbg!(e);
                     }
                     Ok(Ok(to)) => return Some(Ok(to)),
-                    Ok(Err(execution)) => return Some(Err(RunError::Execution(execution))),
+                    Ok(Err(e)) => return Some(Err(RunError::Execution(e))),
                 }
             }
             None
         });
         from_remote.unwrap_or_else(|| Err(RunError::CouldNotRun(task_order)))
+    }
+
+    async fn run_on_peer(
+        &self,
+        task_order: &TaskOrder,
+        mut client: ClusterServiceClient,
+    ) -> std::io::Result<Result<TaskOrder, ExecutionError>> {
+        loop {
+            use std::time::*;
+            let mut context = tarpc::context::current();
+            context.deadline = SystemTime::now() + Duration::from_secs(300);
+            match client
+                .run_to_completion(context, task_order.clone())
+                .await?
+            {
+                Ok(result) => return Ok(result),
+                Err(UnknownByteCode(id)) => {
+                    let bytecode = self.vm.bytecode_registry.get(&id).unwrap().as_ref().clone();
+                    client
+                        .define_bytecode(tarpc::context::current(), id, bytecode)
+                        .await?;
+                }
+            }
+        }
     }
 }
 
@@ -76,17 +101,21 @@ pub(crate) enum RunError {
 
 #[tarpc::service]
 trait ClusterService {
-    async fn run_to_completion(task_order: TaskOrder) -> Result<TaskOrder, ExecutionError>;
+    async fn run_to_completion(
+        task_order: TaskOrder,
+    ) -> Result<Result<TaskOrder, ExecutionError>, UnknownByteCode>;
+
+    async fn define_bytecode(id: u64, bytecode: flock_bytecode::ByteCode);
 }
 
 #[derive(Clone)]
 pub struct ClusterServer {
-    vm: Arc<Vm>,
+    vm: Arc<VmHandle>,
 }
 
 impl ClusterServer {
-    pub fn new(vm: Vm) -> Self {
-        ClusterServer { vm: Arc::new(vm) }
+    pub fn new(vm: &Arc<VmHandle>) -> Self {
+        ClusterServer { vm: vm.clone() }
     }
 
     pub async fn listen(self) -> std::io::Result<()> {
@@ -118,19 +147,40 @@ impl ClusterService for ClusterServer {
         self,
         _: tarpc::context::Context,
         task_order: TaskOrder,
-    ) -> Result<TaskOrder, ExecutionError> {
+    ) -> Result<Result<TaskOrder, ExecutionError>, UnknownByteCode> {
+        eprintln!("Requested to execute task {}", task_order.id);
+        if !self
+            .vm
+            .bytecode_registry
+            .contains_key(&task_order.bytecode_id)
+        {
+            // TODO(shelbyd): Request ByteCode from client.
+            return Err(UnknownByteCode(task_order.bytecode_id));
+        }
         let id = task_order.id;
-        self.vm.enqueue(task_order);
+        self.vm.queue_handle.push_nonworker(task_order);
         let mut interval = tokio::time::interval(core::time::Duration::from_millis(1));
 
         loop {
             interval.tick().await;
-            if let Some(task_order) = self.vm.take_finished(id) {
-                return task_order;
+            if let Some(task_order) = self.vm.finished.remove(&id) {
+                return Ok(task_order.1);
             }
         }
     }
+
+    async fn define_bytecode(
+        self,
+        _: tarpc::context::Context,
+        id: u64,
+        bytecode: flock_bytecode::ByteCode,
+    ) {
+        self.vm.bytecode_registry.insert(id, Arc::new(bytecode));
+    }
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+struct UnknownByteCode(u64);
 
 trait AwaitBlock {
     type Output;

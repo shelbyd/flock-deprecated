@@ -1,4 +1,6 @@
-#[derive(Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ByteCode {
     opcodes: Vec<OpCode>,
 }
@@ -25,7 +27,7 @@ impl From<Vec<OpCode>> for ByteCode {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[non_exhaustive]
 pub enum OpCode {
     Push(i64),
@@ -44,6 +46,7 @@ pub enum OpCode {
 }
 
 bitflags::bitflags! {
+    #[derive(Deserialize, Serialize)]
     pub struct ConditionFlags: u8 {
         const EMPTY = 0b0;
         const ZERO = 0b1;
