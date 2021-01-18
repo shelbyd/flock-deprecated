@@ -1,11 +1,13 @@
+use flume::*;
 use serde::*;
 use std::collections::*;
 use std::io::*;
 use std::net::*;
-use std::sync::{mpsc::*, *};
+use std::sync::*;
 
 pub type Result<T> = std::result::Result<T, RpcError>;
 
+#[derive(Debug)]
 pub struct Node<M> {
     messages: Receiver<Message<M>>,
     messages_tx: Sender<Message<M>>,
@@ -39,7 +41,7 @@ fn spawn_stream_worker<'de, M: Deserialize<'de> + Send + 'static>(
 
 impl<'de, M: Deserialize<'de> + Serialize + Send + 'static> Node<M> {
     pub fn new(port: u16) -> Result<Node<M>> {
-        let (message_tx, message_rx) = channel();
+        let (message_tx, message_rx) = flume::unbounded();
 
         let peers = Arc::new(Mutex::new(HashMap::new()));
 
@@ -78,6 +80,7 @@ impl<'de, M: Deserialize<'de> + Serialize + Send + 'static> Node<M> {
     }
 }
 
+#[derive(Debug)]
 struct Peer {
     peer_addr: SocketAddr,
     writer: BufWriter<TcpStream>,

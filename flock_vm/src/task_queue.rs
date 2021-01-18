@@ -60,7 +60,8 @@ impl<T> Handle<T> {
 
     fn push_to_shared(&mut self) -> Option<usize> {
         if self.local_work.len() > self.sender.len() * 2 {
-            Some(self.local_work.len() / 2)
+            let amount = std::cmp::max(1, self.local_work.len() / 2);
+            Some(amount)
         } else {
             None
         }

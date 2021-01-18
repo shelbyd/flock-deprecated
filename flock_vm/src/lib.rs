@@ -2,6 +2,9 @@
 
 use flock_bytecode::ByteCode;
 
+mod cluster;
+use cluster::*;
+
 mod task;
 use task::*;
 
@@ -15,7 +18,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
-    let mut vm = Vm::connect().unwrap_or_else(|| Vm::create());
+    let mut vm = Vm::create();
     let bytecode = Arc::new(bytecode);
     let bytecode_id = vm.register(&bytecode);
 
@@ -32,6 +35,7 @@ pub struct Vm {
     task_queue: Arc<TaskQueue<TaskOrder>>,
     finished: Arc<DashMap<usize, TaskOrder>>,
     bytecode_registry: Option<Arc<ByteCode>>,
+    cluster: Arc<Cluster>,
 }
 
 impl Vm {
@@ -40,11 +44,8 @@ impl Vm {
             task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
             finished: Arc::new(DashMap::new()),
             bytecode_registry: None,
+            cluster: Arc::new(Cluster::connect()),
         }
-    }
-
-    pub fn connect() -> Option<Vm> {
-        None
     }
 
     fn register(&mut self, bytecode: &Arc<ByteCode>) -> u64 {
@@ -53,12 +54,17 @@ impl Vm {
     }
 
     fn block_on_task(&mut self, mut task_order: TaskOrder) -> Result<(), ExecutionError> {
-        let threads = (0..num_cpus::get())
+        let mut threads = (0..num_cpus::get())
             .map(|_| {
                 let mut executor = self.executor();
                 std::thread::spawn(move || executor.run())
             })
             .collect::<Vec<_>>();
+
+        threads.extend((0..1).map(|_| {
+            let mut executor = self.remote_executor();
+            std::thread::spawn(move || executor.run())
+        }));
 
         self.executor().run_to_completion(&mut task_order)?;
 
@@ -79,6 +85,14 @@ impl Vm {
             handle: self.task_queue.handle(),
             bytecode: self.bytecode_registry.as_ref().unwrap().clone(),
             finished: self.finished.clone(),
+        }
+    }
+
+    fn remote_executor(&self) -> RemoteExecutor {
+        RemoteExecutor {
+            handle: self.task_queue.handle(),
+            finished: self.finished.clone(),
+            cluster: self.cluster.clone(),
         }
     }
 }
@@ -151,15 +165,37 @@ impl Executor {
     }
 }
 
+struct RemoteExecutor {
+    handle: task_queue::Handle<TaskOrder>,
+    finished: Arc<DashMap<usize, TaskOrder>>,
+    cluster: Arc<Cluster>,
+}
+
+impl RemoteExecutor {
+    fn run(&mut self) -> Result<(), ExecutionError> {
+        loop {
+            match self.handle.next() {
+                ControlFlow::Retry => continue,
+                ControlFlow::Finish => return Ok(()),
+                ControlFlow::Continue(task_order) => match self.cluster.run(task_order) {
+                    Ok(finished) => {
+                        let already_there = self.finished.insert(finished.id, finished);
+                        assert!(already_there.is_none());
+                    }
+                    Err(RunError::CouldNotRun(order)) => {
+                        self.handle.push(order);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(RunError::Execution(e)) => return Err(e),
+                },
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct TaskOrder {
     id: usize,
     task: Task,
     bytecode_id: u64,
-}
-
-use serde::{Deserialize, Serialize};
-#[derive(Deserialize, Serialize, Debug)]
-pub enum Message {
-    Test,
 }

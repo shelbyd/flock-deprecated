@@ -7,15 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-crossbeam-deque = "0.8.0"
-crossbeam-queue = "0.3.1"
 flock_bytecode = { path = "../flock_bytecode", version = "0.1.0" }
 flock_rpc = { path = "../flock_rpc", version = "0.1.0" }
-lockfree = "0.5.1"
 num_cpus = "1.13.0"
 rand = "0.8.0"
-seahash = "4.0.1"
 serde = {version = "1.0.119", features = ["derive"]}
-serde_json = "1.0.61"
 flume = "0.10.1"
 dashmap = "4.0.2"
+gflags = "0.3.7"
