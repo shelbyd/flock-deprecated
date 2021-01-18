@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ExecutionError, TaskOrder, VmHandle};
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 use tokio_serde::formats::Json;
 
 gflags::define! {
@@ -9,7 +10,7 @@ gflags::define! {
 }
 
 gflags::define! {
-    --remote-connection: &str
+    --remote-connections: &str
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,28 +19,31 @@ pub enum Message {
 }
 
 pub struct Cluster {
-    runtime: tokio::runtime::Runtime,
+    runtime: Arc<Runtime>,
     peers: Vec<ClusterServiceClient>,
     vm: Arc<VmHandle>,
 }
 
 impl Cluster {
     pub fn connect(handle: &Arc<VmHandle>) -> Cluster {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
 
         runtime.spawn(ClusterServer::new(handle).listen());
 
         let peers = runtime.block_on(async {
-            if REMOTE_CONNECTION.is_present() {
-                let to_cluster_server =
-                    tarpc::serde_transport::tcp::connect(REMOTE_CONNECTION.flag, Json::default)
+            if REMOTE_CONNECTIONS.is_present() {
+                let mut clients = Vec::new();
+                for addr in REMOTE_CONNECTIONS.flag.split(',') {
+                    let transport = tarpc::serde_transport::tcp::connect(addr, Json::default)
                         .await
                         .unwrap();
-                let client =
-                    ClusterServiceClient::new(tarpc::client::Config::default(), to_cluster_server)
-                        .spawn()
-                        .unwrap();
-                vec![client]
+                    let client =
+                        ClusterServiceClient::new(tarpc::client::Config::default(), transport)
+                            .spawn()
+                            .unwrap();
+                    clients.push(client);
+                }
+                clients
             } else {
                 Vec::new()
             }
@@ -52,51 +56,71 @@ impl Cluster {
         }
     }
 
-    pub(crate) fn run(&self, task_order: TaskOrder) -> Result<TaskOrder, RunError> {
-        let from_remote = self.runtime.block_on(async {
-            for peer in self.peers.iter() {
-                eprintln!("Requesting remote execution of task {}", task_order.id);
-                match self.run_on_peer(&task_order, peer.clone()).await {
-                    Err(e) => {
-                        dbg!(e);
-                    }
-                    Ok(Ok(to)) => return Some(Ok(to)),
-                    Ok(Err(e)) => return Some(Err(RunError::Execution(e))),
+    pub(crate) fn peers(&self) -> Vec<Peer> {
+        self.peers
+            .iter()
+            .map(|client| Peer {
+                client: client.clone(),
+                runtime: self.runtime.clone(),
+                vm: self.vm.clone(),
+            })
+            .collect()
+    }
+}
+
+pub(crate) enum RunError {
+    Execution(ExecutionError),
+    ConnectionReset,
+    Unknown,
+}
+
+pub struct Peer {
+    client: ClusterServiceClient,
+    runtime: Arc<Runtime>,
+    vm: Arc<VmHandle>,
+}
+
+impl Peer {
+    pub(crate) fn try_run(&mut self, task_order: &TaskOrder) -> Result<TaskOrder, RunError> {
+        eprintln!("Requesting remote execution of task {}", task_order.id);
+        self.runtime.clone().block_on(async {
+            match self.run_loop(&task_order).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                    Err(RunError::ConnectionReset)
                 }
+                Err(e) => {
+                    dbg!(e);
+                    Err(RunError::Unknown)
+                }
+                Ok(Ok(to)) => Ok(to),
+                Ok(Err(e)) => Err(RunError::Execution(e)),
             }
-            None
-        });
-        from_remote.unwrap_or_else(|| Err(RunError::CouldNotRun(task_order)))
+        })
     }
 
-    async fn run_on_peer(
-        &self,
+    async fn run_loop(
+        &mut self,
         task_order: &TaskOrder,
-        mut client: ClusterServiceClient,
     ) -> std::io::Result<Result<TaskOrder, ExecutionError>> {
         loop {
             use std::time::*;
             let mut context = tarpc::context::current();
             context.deadline = SystemTime::now() + Duration::from_secs(300);
-            match client
+            match self
+                .client
                 .run_to_completion(context, task_order.clone())
                 .await?
             {
                 Ok(result) => return Ok(result),
                 Err(UnknownByteCode(id)) => {
                     let bytecode = self.vm.bytecode_registry.get(&id).unwrap().as_ref().clone();
-                    client
+                    self.client
                         .define_bytecode(tarpc::context::current(), id, bytecode)
                         .await?;
                 }
             }
         }
     }
-}
-
-pub(crate) enum RunError {
-    Execution(ExecutionError),
-    CouldNotRun(TaskOrder),
 }
 
 #[tarpc::service]

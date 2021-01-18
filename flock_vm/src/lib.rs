@@ -18,10 +18,6 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 gflags::define! {
-    pub --remote-workers: u16 = 1
-}
-
-gflags::define! {
     pub --max-local-workers: usize = usize::MAX
 }
 
@@ -116,8 +112,10 @@ impl Vm {
         );
 
         workers.extend(
-            (0..REMOTE_WORKERS.flag)
-                .filter_map(|_| self.remote_executor())
+            self.cluster
+                .iter()
+                .flat_map(|cluster| cluster.peers())
+                .map(|peer| self.remote_executor(peer))
                 .map(|mut executor| std::thread::spawn(move || executor.run())),
         );
 
@@ -132,12 +130,12 @@ impl Vm {
         }
     }
 
-    fn remote_executor(&self) -> Option<RemoteExecutor> {
-        self.cluster.as_ref().map(|cluster| RemoteExecutor {
+    fn remote_executor(&self, peer: Peer) -> RemoteExecutor {
+        RemoteExecutor {
             handle: self.task_queue.handle(),
             shared: self.shared.clone(),
-            cluster: cluster.clone(),
-        })
+            peer,
+        }
     }
 }
 
@@ -236,8 +234,8 @@ impl Executor {
 
 struct RemoteExecutor {
     handle: task_queue::Handle<TaskOrder>,
-    cluster: Arc<Cluster>,
     shared: Arc<VmHandle>,
+    peer: Peer,
 }
 
 impl RemoteExecutor {
@@ -248,13 +246,14 @@ impl RemoteExecutor {
                 ControlFlow::Finish => return,
                 ControlFlow::Continue(task_order) => {
                     let id = task_order.id;
-                    match self.cluster.run(task_order) {
+                    match self.peer.try_run(&task_order) {
                         Ok(finished) => {
                             let already_there = self.shared.finished.insert(id, Ok(finished));
                             assert!(already_there.is_none());
                         }
-                        Err(RunError::CouldNotRun(order)) => {
-                            self.handle.push(order);
+                        Err(RunError::ConnectionReset) => return,
+                        Err(RunError::Unknown) => {
+                            self.handle.push(task_order);
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
                         Err(RunError::Execution(e)) => {
