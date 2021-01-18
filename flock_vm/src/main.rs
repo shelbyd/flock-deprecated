@@ -1,10 +1,8 @@
-use flock_vm::cluster::Message;
+use flock_vm::cluster::ClusterServer;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut node = flock_rpc::Node::<Message>::new(18454)?;
-    for message in node.messages() {
-        dbg!(message);
-    }
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    ClusterServer.listen().await?;
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use flock_bytecode::{ByteCode, ConditionFlags, OpCode};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Task {
     pub(crate) program_counter: usize,
     pub(crate) stack: Vec<i64>,
@@ -152,7 +152,7 @@ impl Task {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub enum ExecutionError {
     PopFromEmptyStack,
     PeekFromEmptyStack,

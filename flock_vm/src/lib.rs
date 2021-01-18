@@ -2,7 +2,7 @@
 
 use flock_bytecode::ByteCode;
 
-mod cluster;
+pub mod cluster;
 use cluster::*;
 
 mod task;
@@ -54,6 +54,7 @@ impl Vm {
     }
 
     fn block_on_task(&mut self, mut task_order: TaskOrder) -> Result<(), ExecutionError> {
+        // TODO(shelbyd): Error early when background or remote execution errors.
         let mut threads = (0..num_cpus::get())
             .map(|_| {
                 let mut executor = self.executor();
@@ -186,14 +187,17 @@ impl RemoteExecutor {
                         self.handle.push(order);
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     }
-                    Err(RunError::Execution(e)) => return Err(e),
+                    Err(RunError::Execution(e)) => {
+                        dbg!(&e);
+                        return Err(e);
+                    },
                 },
             }
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct TaskOrder {
     id: usize,
     task: Task,

@@ -15,3 +15,8 @@ serde = {version = "1.0.119", features = ["derive"]}
 flume = "0.10.1"
 dashmap = "4.0.2"
 gflags = "0.3.7"
+tarpc = { version = "0.24", features = ["serde-transport", "tcp", "tokio1"] }
+tokio-serde = { version = "0.8", features = ["json", "bincode"] }
+futures = { version = "0.3.12", features = ["executor"] }
+lazy_static = "1.4.0"
+tokio = { version = "1.0.2", features = ["rt", "macros"] }

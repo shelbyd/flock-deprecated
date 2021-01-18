@@ -1,5 +1,3 @@
-use structopt::StructOpt;
-
 mod compiler;
 use compiler::to_bytecode;
 
@@ -8,18 +6,17 @@ use parser::parse_asm;
 
 mod statement;
 
-#[derive(StructOpt, Debug)]
-struct Options {
-    file: std::path::PathBuf,
-}
-
 type DynResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> DynResult<()> {
-    let options = Options::from_args();
+    let args = gflags::parse_os();
+
     let contents = {
         use std::io::Read;
-        let mut file = std::fs::File::open(options.file)?;
+        let file_path = args
+            .get(0)
+            .expect("Must provide 1 positional argument as file to compile");
+        let mut file = std::fs::File::open(file_path)?;
         let mut string = String::new();
         file.read_to_string(&mut string)?;
         string
