@@ -40,72 +40,78 @@ pub fn run(bytecode: ByteCode) -> Result<(), ExecutionError> {
 }
 
 type FinishedMap = DashMap<usize, Result<TaskOrder, ExecutionError>>;
+type ByteCodeMap = DashMap<u64, Arc<ByteCode>>;
 
 pub struct Vm {
-    task_queue: Arc<TaskQueue<TaskOrder>>,
+    task_queue: TaskQueue<TaskOrder>,
     finished: Arc<FinishedMap>,
-    bytecode_registry: Option<Arc<ByteCode>>,
+    bytecode_registry: Arc<ByteCodeMap>,
     cluster: Option<Arc<Cluster>>,
+    workers: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Vm {
     pub fn create() -> Vm {
-        Vm {
-            task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
+        let mut result = Vm {
+            task_queue: TaskQueue::<TaskOrder>::new(),
             finished: Arc::new(DashMap::new()),
-            bytecode_registry: None,
+            bytecode_registry: Arc::new(DashMap::new()),
             cluster: Some(Arc::new(Cluster::connect())),
-        }
+            workers: Vec::new(),
+        };
+        result.workers = result.spawn_workers();
+        result
     }
 
     pub fn create_leaf() -> Vm {
-        Vm {
-            task_queue: Arc::new(TaskQueue::<TaskOrder>::new()),
+        let mut result = Vm {
+            task_queue: TaskQueue::<TaskOrder>::new(),
             finished: Arc::new(DashMap::new()),
-            bytecode_registry: None,
+            bytecode_registry: Arc::new(DashMap::new()),
             cluster: None,
-        }
+            workers: Vec::new(),
+        };
+        result.workers = result.spawn_workers();
+        result
     }
 
     fn register(&mut self, bytecode: &Arc<ByteCode>) -> u64 {
-        self.bytecode_registry = Some(bytecode.clone());
+        self.bytecode_registry.insert(0, bytecode.clone());
         0
     }
 
     fn block_on_task(&mut self, task_order: TaskOrder) -> Result<(), ExecutionError> {
-        let local_workers = std::cmp::min(num_cpus::get(), MAX_LOCAL_WORKERS.flag);
-        let mut threads = (0..local_workers)
-            .map(|_| {
-                let mut executor = self.executor();
-                std::thread::spawn(move || executor.run())
-            })
-            .collect::<Vec<_>>();
+        self.spawn_workers();
 
-        threads.extend(
-            (0..REMOTE_WORKERS.flag)
-                .filter_map(|_| self.remote_executor())
-                .map(|mut executor| std::thread::spawn(move || executor.run())),
-        );
-
-        let result = self.executor().run_to_completion(task_order);
-
-        self.task_queue.finish(move || {
-            for thread in threads {
-                thread.join().unwrap();
-            }
-        });
-
-        result?;
-
+        self.executor().run_to_completion(task_order)?;
         assert_eq!(self.finished.len(), 0);
 
         Ok(())
     }
 
+    fn spawn_workers(&self) -> Vec<std::thread::JoinHandle<()>> {
+        let mut workers = Vec::new();
+
+        let local_workers = std::cmp::min(num_cpus::get(), MAX_LOCAL_WORKERS.flag);
+        workers.extend(
+            (0..local_workers)
+                .map(|_| self.executor())
+                .map(|mut executor| std::thread::spawn(move || executor.run())),
+        );
+
+        workers.extend(
+            (0..REMOTE_WORKERS.flag)
+                .filter_map(|_| self.remote_executor())
+                .map(|mut executor| std::thread::spawn(move || executor.run())),
+        );
+
+        workers
+    }
+
     fn executor(&self) -> Executor {
         Executor {
             handle: self.task_queue.handle(),
-            bytecode: self.bytecode_registry.as_ref().unwrap().clone(),
+            bytecode: self.bytecode_registry.clone(),
             finished: self.finished.clone(),
         }
     }
@@ -127,9 +133,20 @@ impl Vm {
     }
 }
 
+impl Drop for Vm {
+    fn drop(&mut self) {
+        let workers = &mut self.workers;
+        self.task_queue.finish(move || {
+            for thread in workers.drain(..) {
+                thread.join().unwrap();
+            }
+        });
+    }
+}
+
 struct Executor {
     handle: task_queue::Handle<TaskOrder>,
-    bytecode: Arc<ByteCode>,
+    bytecode: Arc<ByteCodeMap>,
     finished: Arc<FinishedMap>,
 }
 
@@ -158,7 +175,8 @@ impl Executor {
     ) -> Result<TaskOrder, ExecutionError> {
         // TODO(shelbyd): Never overflow stack.
         loop {
-            match task_order.task.run(&self.bytecode)? {
+            let bytecode = self.bytecode.get(&task_order.bytecode_id).unwrap().clone();
+            match task_order.task.run(&bytecode)? {
                 Execution::Terminated => {
                     return Ok(task_order);
                 }
