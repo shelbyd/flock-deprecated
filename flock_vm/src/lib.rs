@@ -208,13 +208,17 @@ impl Executor {
     }
 
     fn busy_until_task_done(&mut self, task_id: usize) -> Result<TaskOrder, ExecutionError> {
+        let mut last_failed = false;
         loop {
             // TODO(shelbyd): Error with unrecognized task id.
             if let Some(done) = self.finished.remove(&task_id) {
                 return Ok(done.1);
             }
             if !self.busy_tick()? {
-                return Err(ExecutionError::UnableToProgress);
+                if last_failed {
+                    return Err(ExecutionError::UnableToProgress);
+                }
+                last_failed = true;
             }
         }
     }
