@@ -53,9 +53,9 @@ impl Cluster {
     }
 
     pub(crate) fn run(&self, task_order: TaskOrder) -> Result<TaskOrder, RunError> {
-        eprintln!("Requesting remote execution of task {}", task_order.id);
         let from_remote = self.runtime.block_on(async {
             for peer in self.peers.iter() {
+                eprintln!("Requesting remote execution of task {}", task_order.id);
                 match self.run_on_peer(&task_order, peer.clone()).await {
                     Err(e) => {
                         dbg!(e);
