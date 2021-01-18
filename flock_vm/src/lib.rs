@@ -240,27 +240,21 @@ struct RemoteExecutor {
 
 impl RemoteExecutor {
     fn run(&mut self) {
-        loop {
-            match self.handle.next() {
-                ControlFlow::Retry => continue,
-                ControlFlow::Finish => return,
-                ControlFlow::Continue(task_order) => {
-                    let id = task_order.id;
-                    match self.peer.try_run(&task_order) {
-                        Ok(finished) => {
-                            let already_there = self.shared.finished.insert(id, Ok(finished));
-                            assert!(already_there.is_none());
-                        }
-                        Err(RunError::ConnectionReset) => return,
-                        Err(RunError::Unknown) => {
-                            self.handle.push(task_order);
-                            std::thread::sleep(std::time::Duration::from_millis(10));
-                        }
-                        Err(RunError::Execution(e)) => {
-                            let already_there = self.shared.finished.insert(id, Err(e));
-                            assert!(already_there.is_none());
-                        }
-                    }
+        while let Some(task_order) = self.handle.wait_next() {
+            let id = task_order.id;
+            match self.peer.try_run(&task_order) {
+                Ok(finished) => {
+                    let already_there = self.shared.finished.insert(id, Ok(finished));
+                    assert!(already_there.is_none());
+                }
+                Err(RunError::ConnectionReset) => return,
+                Err(RunError::Unknown) => {
+                    self.handle.push(task_order);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(RunError::Execution(e)) => {
+                    let already_there = self.shared.finished.insert(id, Err(e));
+                    assert!(already_there.is_none());
                 }
             }
         }

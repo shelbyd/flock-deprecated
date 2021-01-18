@@ -93,4 +93,14 @@ impl<T> Handle<T> {
             Err(RecvTimeoutError::Disconnected) => ControlFlow::Finish,
         }
     }
+
+    pub fn wait_next(&mut self) -> Option<T> {
+        loop {
+            match self.next() {
+                ControlFlow::Retry => {}
+                ControlFlow::Finish => return None,
+                ControlFlow::Continue(t) => return Some(t),
+            }
+        }
+    }
 }
