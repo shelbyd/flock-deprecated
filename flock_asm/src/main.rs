@@ -9,6 +9,7 @@ mod statement;
 type DynResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> DynResult<()> {
+    pretty_env_logger::init_timed();
     let args = gflags::parse_os();
 
     let contents = {
@@ -25,11 +26,11 @@ fn main() -> DynResult<()> {
     let asm_statements = match parse_asm(&contents) {
         Ok(s) => s.1,
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-            eprintln!("Parse Error:\n{:#?}", e);
+            log::error!("Parse Error:\n{:#?}", e);
             std::process::exit(1);
         }
         Err(nom::Err::Incomplete(_)) => {
-            eprintln!("Incomplete Input");
+            log::error!("Incomplete input");
             std::process::exit(1);
         }
     };

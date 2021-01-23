@@ -241,22 +241,22 @@ struct RemoteExecutor {
 impl RemoteExecutor {
     fn run(&mut self) {
         while let Some(task_order) = self.handle.wait_next() {
-            let id = task_order.id;
-            match self.peer.try_run(&task_order) {
-                Ok(finished) => {
-                    let already_there = self.shared.finished.insert(id, Ok(finished));
-                    assert!(already_there.is_none());
+            let to_insert = match self.peer.try_run(&task_order) {
+                Ok(finished) => Ok(finished),
+                Err(RunError::Execution(e)) => Err(e),
+                Err(RunError::ConnectionReset) => {
+                    self.handle.push_nonworker(task_order);
+                    log::warn!("Connection to peer {:?} lost", self.peer);
+                    return;
                 }
-                Err(RunError::ConnectionReset) => return,
                 Err(RunError::Unknown) => {
-                    self.handle.push(task_order);
+                    self.handle.push_nonworker(task_order);
                     std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
                 }
-                Err(RunError::Execution(e)) => {
-                    let already_there = self.shared.finished.insert(id, Err(e));
-                    assert!(already_there.is_none());
-                }
-            }
+            };
+            let already_there = self.shared.finished.insert(task_order.id, to_insert);
+            assert!(already_there.is_none());
         }
     }
 }

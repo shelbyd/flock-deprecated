@@ -82,14 +82,14 @@ pub struct Peer {
 
 impl Peer {
     pub(crate) fn try_run(&mut self, task_order: &TaskOrder) -> Result<TaskOrder, RunError> {
-        eprintln!("Requesting remote execution of task {}", task_order.id);
+        log::info!("Requesting remote execution of task {}", task_order.id);
         self.runtime.clone().block_on(async {
             match self.run_loop(&task_order).await {
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
                     Err(RunError::ConnectionReset)
                 }
                 Err(e) => {
-                    dbg!(e);
+                    log::error!("{}", e);
                     Err(RunError::Unknown)
                 }
                 Ok(Ok(to)) => Ok(to),
@@ -120,6 +120,12 @@ impl Peer {
                 }
             }
         }
+    }
+}
+
+impl std::fmt::Debug for Peer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.client.fmt(formatter)
     }
 }
 
