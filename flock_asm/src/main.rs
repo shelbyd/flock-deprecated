@@ -12,16 +12,10 @@ fn main() -> DynResult<()> {
     pretty_env_logger::init_timed();
     let args = gflags::parse_os();
 
-    let contents = {
-        use std::io::Read;
-        let file_path = args
-            .get(0)
-            .expect("Must provide 1 positional argument as file to compile");
-        let mut file = std::fs::File::open(file_path)?;
-        let mut string = String::new();
-        file.read_to_string(&mut string)?;
-        string
-    };
+    let file_path = args
+        .get(0)
+        .ok_or("Must provide 1 positional argument as file to compile")?;
+    let contents = String::from_utf8(std::fs::read(file_path)?)?;
 
     let asm_statements = match parse_asm(&contents) {
         Ok(s) => s.1,
