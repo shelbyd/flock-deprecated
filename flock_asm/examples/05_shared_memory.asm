@@ -24,20 +24,20 @@ spawn_tasks:
   FORK
   JMP f, $check_value
 
-  DREGDE 1
+  DREDGE 1
   STORE_REL $task_list_start
   JMP $spawn_tasks
 
 join:
   LOAD $task_list_size
 join_loop:
-  JMP z, $halt
+  JMP z, $join_halt
   PUSH -1
   ADD
 
   DUP
   LOAD_REL $task_list_start
-  JOIN
+  JOIN 0
 
   JMP $join_loop
 

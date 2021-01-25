@@ -94,6 +94,19 @@ fn compile_action<'s>(
         Statement::Command0("FORK") => OpCode::Fork.into(),
         Statement::Command1("JOIN", Argument::LiteralNumber(n)) => OpCode::Join(*n).into(),
         Statement::Command0("HALT") => OpCode::Halt.into(),
+        Statement::Command1("STORE", arg) => {
+            thunk(move |table| Ok(OpCode::Store(resolve(arg, table)?)))
+        }
+        Statement::Command1("STORE_REL", arg) => {
+            thunk(move |table| Ok(OpCode::StoreRelative(resolve(arg, table)?)))
+        }
+        Statement::Command1("LOAD", arg) => {
+            thunk(move |table| Ok(OpCode::Load(resolve(arg, table)?)))
+        }
+        Statement::Command1("LOAD_REL", arg) => {
+            thunk(move |table| Ok(OpCode::LoadRelative(resolve(arg, table)?)))
+        }
+        Statement::Command0("PANIC") => OpCode::Panic.into(),
         s => Err(CompilationError::UnrecognizedStatement(format!("{:?}", s)))?,
     };
     Ok(Some(action))

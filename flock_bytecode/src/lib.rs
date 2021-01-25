@@ -43,6 +43,11 @@ pub enum OpCode {
     Fork,
     Join(i64),
     Halt,
+    Store(i64),
+    Load(i64),
+    StoreRelative(i64),
+    LoadRelative(i64),
+    Panic,
 }
 
 bitflags::bitflags! {
