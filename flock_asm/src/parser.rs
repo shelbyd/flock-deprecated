@@ -1,9 +1,10 @@
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while},
+    bytes::complete::{tag, take_while, take_while_m_n},
     character::complete::{
         alpha1, alphanumeric1, digit1, line_ending, multispace0, one_of, space0, space1,
     },
+    character::is_hex_digit,
     combinator::{all_consuming, eof, map, opt, peek, recognize},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
@@ -23,6 +24,7 @@ fn single_statement(input: &str) -> IResult<&str, Statement> {
             empty_line,
             comment,
             label_definition,
+            value_declaration,
             command_2_arg,
             command_1_arg,
             command_0_arg,
@@ -50,6 +52,13 @@ fn label_definition(input: &str) -> IResult<&str, Statement> {
 
 fn label(input: &str) -> IResult<&str, &str> {
     ident(input)
+}
+
+fn value_declaration(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((label, tag(" = "), literal_number)),
+        |(label, _, value)| Statement::ValueDeclaration(label, value),
+    )(input)
 }
 
 fn command_0_arg(input: &str) -> IResult<&str, Statement> {
@@ -90,10 +99,28 @@ fn command_2_arg(input: &str) -> IResult<&str, Statement> {
 }
 
 fn argument(input: &str) -> IResult<&str, Argument> {
-    let literal_number = map(recognize(tuple((opt(tag("-")), digit1))), |n: &str| {
-        Argument::LiteralNumber(n.parse::<i64>().unwrap())
-    });
+    let literal_number = map(literal_number, |n| Argument::LiteralNumber(n));
     let literal_str = map(alpha1, Argument::LiteralStr);
     let reference = map(preceded(tag("$"), ident), Argument::Reference);
     alt((literal_number, reference, literal_str))(input)
+}
+
+fn literal_number(input: &str) -> IResult<&str, i64> {
+    alt((hex_number, decimal_number))(input)
+}
+
+fn decimal_number(input: &str) -> IResult<&str, i64> {
+    map(recognize(tuple((opt(tag("-")), digit1))), |n: &str| {
+        n.parse::<i64>().unwrap()
+    })(input)
+}
+
+fn hex_number(input: &str) -> IResult<&str, i64> {
+    map(
+        preceded(
+            tag("0x"),
+            take_while_m_n(1, 16, |char_| is_hex_digit(char_ as u8)),
+        ),
+        |n: &str| i64::from_str_radix(n, 16).unwrap(),
+    )(input)
 }

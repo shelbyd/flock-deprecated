@@ -4,6 +4,7 @@ pub enum Statement<'s> {
     Comment(&'s str),
     EmptyLine,
     LabelDefinition(&'s str),
+    ValueDeclaration(&'s str, i64),
     Command0(&'s str),
     Command1(&'s str, Argument<'s>),
     Command2(&'s str, Argument<'s>, Argument<'s>),

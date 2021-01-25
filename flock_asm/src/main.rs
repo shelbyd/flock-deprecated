@@ -19,7 +19,7 @@ fn main() -> DynResult<()> {
 
     let asm_statements = match parse_asm(&contents) {
         Ok(s) => s.1,
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+        Err(e @ nom::Err::Error(_)) | Err(e @ nom::Err::Failure(_)) => {
             log::error!("Parse Error:\n{:#?}", e);
             std::process::exit(1);
         }

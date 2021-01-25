@@ -22,6 +22,9 @@ pub fn to_bytecode(statements: &[Statement]) -> Result<ByteCode, Box<dyn std::er
             Some(CompileAction::RegisterLabel(label)) => {
                 label_table.insert(label, thunks.len());
             }
+            Some(CompileAction::RegisterValue(label, value)) => {
+                label_table.insert(label, value as usize);
+            }
             None => {}
         }
     }
@@ -36,6 +39,7 @@ enum CompileAction<'s> {
     PushOpcode(OpCode),
     OpCodeThunk(Box<OpCodeThunk<'s>>),
     RegisterLabel(&'s str),
+    RegisterValue(&'s str, i64),
 }
 
 impl<'s> From<OpCode> for CompileAction<'s> {
@@ -51,43 +55,38 @@ fn compile_action<'s>(
         Statement::Comment(_) => return Ok(None),
         Statement::EmptyLine => return Ok(None),
         Statement::LabelDefinition(label) => CompileAction::RegisterLabel(label),
-        Statement::Command1("PUSH", arg) => CompileAction::OpCodeThunk(Box::new(move |table: &_| {
-            Ok(OpCode::Push(resolve(arg, table)?))
-        }) as Box<_>),
+        Statement::ValueDeclaration(label, value) => CompileAction::RegisterValue(label, *value),
+        Statement::Command1("PUSH", arg) => {
+            thunk(move |table| Ok(OpCode::Push(resolve(arg, table)?)))
+        }
         Statement::Command0("ADD") => OpCode::Add.into(),
         Statement::Command0("DUMP_DEBUG") => OpCode::DumpDebug.into(),
         Statement::Command0("JMP") => OpCode::Jump(ConditionFlags::EMPTY, None).into(),
         Statement::Command1("JMP", Argument::LiteralStr(arg)) => {
             OpCode::Jump(parse_jump_arg(arg)?, None).into()
         }
-        Statement::Command1("JMP", ref_ @ Argument::Reference(_)) => {
-            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
-                Ok(OpCode::Jump(
-                    ConditionFlags::EMPTY,
-                    Some(resolve(ref_, table)?),
-                ))
-            }))
-        }
+        Statement::Command1("JMP", ref_ @ Argument::Reference(_)) => thunk(move |table| {
+            Ok(OpCode::Jump(
+                ConditionFlags::EMPTY,
+                Some(resolve(ref_, table)?),
+            ))
+        }),
         Statement::Command2("JMP", Argument::LiteralStr(arg), ref_ @ Argument::Reference(_)) => {
-            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
+            thunk(move |table| {
                 let target = Some(resolve(ref_, table)?);
                 let flags = parse_jump_arg(arg)?;
                 Ok(OpCode::Jump(flags, target))
-            }))
+            })
         }
         Statement::Command0("JSR") => OpCode::JumpToSubroutine(None).into(),
         Statement::Command1("JSR", ref_ @ Argument::Reference(_)) => {
-            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
-                Ok(OpCode::JumpToSubroutine(Some(resolve(ref_, table)?)))
-            }))
+            thunk(move |table| Ok(OpCode::JumpToSubroutine(Some(resolve(ref_, table)?))))
         }
-        Statement::Command1("BURY", arg) => CompileAction::OpCodeThunk(Box::new(move |table: &_| {
-            Ok(OpCode::Bury(resolve(arg, table)?))
-        }) as Box<_>),
+        Statement::Command1("BURY", arg) => {
+            thunk(move |table| Ok(OpCode::Bury(resolve(arg, table)?)))
+        }
         Statement::Command1("DREDGE", arg) => {
-            CompileAction::OpCodeThunk(Box::new(move |table: &_| {
-                Ok(OpCode::Dredge(resolve(arg, table)?))
-            }) as Box<_>)
+            thunk(move |table| Ok(OpCode::Dredge(resolve(arg, table)?)))
         }
         Statement::Command0("DUP") => OpCode::Duplicate.into(),
         Statement::Command0("RET") => OpCode::Return.into(),
@@ -98,6 +97,12 @@ fn compile_action<'s>(
         s => Err(CompilationError::UnrecognizedStatement(format!("{:?}", s)))?,
     };
     Ok(Some(action))
+}
+
+fn thunk<'s>(
+    func: impl FnOnce(&LabelTable<'s>) -> Result<OpCode, CompilationError> + 's,
+) -> CompileAction<'s> {
+    CompileAction::OpCodeThunk(Box::new(func))
 }
 
 fn resolve(argument: &Argument, label_table: &LabelTable) -> Result<i64, CompilationError> {
