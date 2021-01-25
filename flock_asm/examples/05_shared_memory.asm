@@ -49,7 +49,6 @@ check_value:
   PUSH -42
   ADD
   JMP z, $value_ok
-  DUMP_DEBUG
   PANIC
 
 value_ok:

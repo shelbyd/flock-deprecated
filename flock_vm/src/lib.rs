@@ -42,6 +42,7 @@ pub struct VmHandle {
     queue_handle: task_queue::Handle<TaskOrder>,
     finished: FinishedMap,
     bytecode_registry: ByteCodeMap,
+    memory: DashMap<u64, i64>,
 }
 
 impl VmHandle {
@@ -50,6 +51,7 @@ impl VmHandle {
             queue_handle: queue.handle(),
             finished: DashMap::new(),
             bytecode_registry: DashMap::new(),
+            memory: DashMap::new(),
         }
     }
 }
@@ -210,6 +212,12 @@ impl Executor {
                     let other_stack = &joined.task.stack;
                     let to_push = other_stack.split_at(other_stack.len() - count).1;
                     task_order.task.stack.extend(to_push.iter().cloned());
+                }
+                Execution::Store { addr, value } => {
+                    self.shared.memory.insert(addr, value);
+                }
+                Execution::Load { addr } => {
+                    task_order.task.stack.push(self.shared.memory.get(&addr).map(|ref_| *ref_.value()).unwrap_or(0));
                 }
             }
         }

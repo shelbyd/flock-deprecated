@@ -112,6 +112,27 @@ impl Task {
             OpCode::Halt => {
                 return Ok(ControlFlow::Return(Execution::Terminated));
             }
+            OpCode::Store(addr) => {
+                let value = self.pop()?;
+                return Ok(ControlFlow::Return(Execution::Store { addr: *addr, value }));
+            }
+            OpCode::StoreRelative(base) => {
+                let offset = self.pop()?;
+                let addr = base.wrapping_add(offset as u64);
+                let value = self.pop()?;
+                return Ok(ControlFlow::Return(Execution::Store { addr, value }));
+            }
+            OpCode::Load(addr) => {
+                return Ok(ControlFlow::Return(Execution::Load { addr: *addr }));
+            }
+            OpCode::LoadRelative(base) => {
+                let offset = self.pop()?;
+                let addr = base.wrapping_add(offset as u64);
+                return Ok(ControlFlow::Return(Execution::Load { addr }));
+            }
+            OpCode::Panic => {
+                return Err(ExecutionError::ExplicitPanic);
+            }
             op => {
                 unimplemented!("Unhandled opcode {:?}", op);
             }
@@ -160,6 +181,7 @@ pub enum ExecutionError {
     BuryOutOfRange(i64),
     UnknownTaskId(usize),
     UnableToProgress,
+    ExplicitPanic,
 }
 
 impl std::error::Error for ExecutionError {}
@@ -180,6 +202,8 @@ pub enum Execution {
     Terminated,
     Fork,
     Join { task_id: usize, count: usize },
+    Store { addr: u64, value: i64 },
+    Load { addr: u64 },
 }
 
 trait BoolImplies {
