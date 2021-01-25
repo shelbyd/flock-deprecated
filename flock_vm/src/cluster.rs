@@ -30,6 +30,7 @@ impl Cluster {
 
         runtime.spawn(ClusterServer::new(handle).listen());
 
+        // TODO(shelbyd): Include client in Cluster upon new connection.
         let peers = runtime.block_on(async {
             if REMOTE_CONNECTIONS.is_present() {
                 let mut clients = Vec::new();
@@ -65,6 +66,21 @@ impl Cluster {
                 vm: self.vm.clone(),
             })
             .collect()
+    }
+
+    pub(crate) fn store(&self, addr: u64, value: i64) {
+        log::debug!("Storing remotely {} @ {:x}", value, addr);
+        for mut peer in self.peers() {
+            loop {
+                match peer.store(addr, value) {
+                    Ok(()) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break,
+                    Err(e) => {
+                        log::error!("Store error: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -121,6 +137,15 @@ impl Peer {
             }
         }
     }
+
+    fn store(&mut self, addr: u64, value: i64) -> std::io::Result<()> {
+        self.runtime.clone().block_on(async {
+            self.client
+                .store(tarpc::context::current(), addr, value)
+                .await?;
+            Ok(())
+        })
+    }
 }
 
 impl std::fmt::Debug for Peer {
@@ -136,6 +161,8 @@ trait ClusterService {
     ) -> Result<Result<TaskOrder, ExecutionError>, UnknownByteCode>;
 
     async fn define_bytecode(id: u64, bytecode: flock_bytecode::ByteCode);
+
+    async fn store(addr: u64, value: i64);
 }
 
 #[derive(Clone)]
@@ -178,7 +205,7 @@ impl ClusterService for ClusterServer {
         _: tarpc::context::Context,
         task_order: TaskOrder,
     ) -> Result<Result<TaskOrder, ExecutionError>, UnknownByteCode> {
-        eprintln!("Requested to execute task {}", task_order.id);
+        log::info!("Requested to execute task {}", task_order.id);
         if !self
             .vm
             .bytecode_registry
@@ -206,6 +233,11 @@ impl ClusterService for ClusterServer {
         bytecode: flock_bytecode::ByteCode,
     ) {
         self.vm.bytecode_registry.insert(id, Arc::new(bytecode));
+    }
+
+    async fn store(self, _: tarpc::context::Context, addr: u64, value: i64) {
+        log::debug!("Storing from remote {} @ 0x{:x}", value, addr);
+        self.vm.memory.insert(addr, value);
     }
 }
 

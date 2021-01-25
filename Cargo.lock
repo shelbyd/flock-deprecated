@@ -243,6 +243,7 @@ dependencies = [
  "lazy_static",
  "log",
  "num_cpus",
+ "pretty_env_logger",
  "rand 0.8.0",
  "serde",
  "tarpc",

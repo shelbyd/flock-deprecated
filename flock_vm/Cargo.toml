@@ -21,3 +21,4 @@ futures = { version = "0.3.12", features = ["executor"] }
 lazy_static = "1.4.0"
 tokio = { version = "1.0.2", features = ["rt", "macros"] }
 log = "0.4.13"
+pretty_env_logger = "0.4.0"

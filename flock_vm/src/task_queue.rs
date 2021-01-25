@@ -55,7 +55,7 @@ impl<T> Handle<T> {
     pub fn push(&mut self, item: T) {
         self.local_work.push_back(item);
         if let Some(amount) = self.push_to_shared() {
-            log::info!("Sending {} items to machine shared work pool", amount);
+            log::debug!("Sending {} items to machine shared work pool", amount);
             for work in self.local_work.drain(..amount) {
                 self.sender.send(ControlFlow::Continue(work)).unwrap();
             }

@@ -129,6 +129,7 @@ impl Vm {
         Executor {
             handle: self.task_queue.handle(),
             shared: self.shared.clone(),
+            cluster: self.cluster.clone(),
         }
     }
 
@@ -155,6 +156,7 @@ impl Drop for Vm {
 struct Executor {
     handle: task_queue::Handle<TaskOrder>,
     shared: Arc<VmHandle>,
+    cluster: Option<Arc<Cluster>>,
 }
 
 impl Executor {
@@ -215,9 +217,18 @@ impl Executor {
                 }
                 Execution::Store { addr, value } => {
                     self.shared.memory.insert(addr, value);
+                    if let Some(c) = &self.cluster {
+                        c.store(addr, value);
+                    }
                 }
                 Execution::Load { addr } => {
-                    task_order.task.stack.push(self.shared.memory.get(&addr).map(|ref_| *ref_.value()).unwrap_or(0));
+                    task_order.task.stack.push(
+                        self.shared
+                            .memory
+                            .get(&addr)
+                            .map(|ref_| *ref_.value())
+                            .unwrap_or(0),
+                    );
                 }
             }
         }
